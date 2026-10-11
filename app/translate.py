@@ -56,7 +56,8 @@ def _timeout() -> float:
 def _libretranslate(texts: list[str], lang: str) -> list[str] | None:
     url = config.get("libretranslate_url").strip().rstrip("/") + "/translate"
     key = (config.get("libretranslate_api_key") or "").strip()
-    for source in ({"en": "en", "zh": "zh"}.get(lang, "auto"), "auto"):
+    # Chinesisch heißt je nach LibreTranslate-Version „zh“ oder „zh-Hans“; unbekannter Code -> automatisch
+    for source in {"en": ["en", "auto"], "zh": ["zh-Hans", "zh", "auto"]}.get(lang, ["auto"]):
         body = {"q": texts, "source": source, "target": "de", "format": "text"}
         if key:
             body["api_key"] = key

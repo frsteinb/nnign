@@ -71,6 +71,18 @@ Der Backfill übersteht Neustarts, weil jede Aufgabe in der Datenbank abgehakt w
   Meldung „keine Quelle erreichbar“ und automatische Wiederholung alle 10 Minuten.
 * Oberfläche mit 214 Demo-Themen (2000–2026) in Hell, Dunkel und Handybreite geprüft (Screenshots).
 
+### Nachtrag 1.2.0 – fremdsprachige Quellen und Updates
+
+- Neue Quellen: Braunschweiger Zeitung (de), Reuters, Bloomberg, Caixin Global, CnEVPost, Automotive News (en).
+  Feeds nur für Bloomberg und CnEVPost hinterlegt (ungeprüft), sonst Nachrichtensuche `site:` in der englischen
+  Google-News-Ausgabe.
+- Übersetzung ins Deutsche über LibreTranslate (optionaler Container, ohne Key), DeepL oder KI; Original bleibt
+  erhalten. Ohne Übersetzer: Originaltext plus englische/chinesische Bewertungsregeln.
+- Abgleich beim Neustart nach Image-Update: neue Quellen nachholen, Backfill einplanen, Neu-Bewertung bei
+  geänderten Regeln, Nachübersetzung. Getestet mit Mock-Servern (LibreTranslate, DeepL, OpenAI-kompatibel);
+  echter LibreTranslate-Container in der Sandbox nicht startbar (kein Netz) – Sprachcode für Chinesisch
+  (`zh` bzw. `zh-Hans`) wird daher automatisch durchprobiert.
+
 ## Nicht getestet / Risiken
 
 | Risiko | Auswirkung | Gegenmaßnahme im System |

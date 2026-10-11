@@ -24,6 +24,7 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
     <li><a href="#zeitraum">Erfassungszeitraum und Aktualisierung</a></li>
     <li><a href="#relevanz">Relevanz: Betrifft es den VW-Konzern?</a></li>
     <li><a href="#themen">Themenbildung</a></li>
+    <li><a href="#sprachen">Fremdsprachige Quellen und Übersetzung</a></li>
     <li><a href="#bewertung">Bewertung positiv / neutral / negativ</a> – mit <a href="#annahmen">Kriterien und Annahmen</a></li>
     <li><a href="#ki">KI-Analyse und Prompt</a></li>
     <li><a href="#statistik">Statistik</a></li>
@@ -38,7 +39,8 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
 <ol>
   <li><strong>Abruf</strong> – Meldungen aus RSS-Feeds, Nachrichtensuche, Archivseiten und dem Internet Archive holen.</li>
   <li><strong>Zeitraum</strong> – nur Meldungen mit Erscheinungsdatum im Erfassungszeitraum werden weiterverarbeitet.</li>
-  <li><strong>Relevanz</strong> – Begriffslisten prüfen, ob die Meldung den VW-Konzern betrifft.</li>
+  <li><strong>Relevanz</strong> – Begriffslisten prüfen, ob die Meldung den VW-Konzern betrifft (deutsche, englische und chinesische Begriffe).</li>
+  <li><strong>Übersetzung</strong> – englische und chinesische Meldungen werden ins Deutsche übersetzt, sofern ein Übersetzer eingerichtet ist (<a href="#sprachen">Abschnitt 6</a>).</li>
   <li><strong>Dubletten</strong> – bereits bekannte Meldungen (gleiche URL oder gleicher Titel im selben Medium) werden übersprungen. So entstehen nur <em>neue</em> Einträge.</li>
   <li><strong>Themenbildung</strong> – die Meldung wird einem bestehenden Thema derselben Nachrichtengeschichte zugeordnet oder eröffnet ein neues.</li>
   <li><strong>Bewertung</strong> – Regelwerk (immer) und optional KI ergeben positiv, neutral oder negativ, jeweils mit Begründung.</li>
@@ -50,7 +52,7 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
   <thead><tr><th>Weg</th><th>Wofür</th><th>Wie</th></tr></thead>
   <tbody>
   <tr><td>RSS/Atom-Feeds</td><td>aktuelle Meldungen mit Teaser</td><td>Feeds je Medium, siehe unten</td></tr>
-  <tr><td>Nachrichtensuche</td><td>Artikel, die nicht (mehr) im Feed stehen</td><td>Google-News-RSS mit <code>site:domain</code> und Zeitfenstern (<code>after:</code>/<code>before:</code>); Suchbegriffe: <code>{{ cfg('search_query') }}</code></td></tr>
+  <tr><td>Nachrichtensuche</td><td>Artikel, die nicht (mehr) im Feed stehen</td><td>Google-News-RSS mit <code>site:domain</code> und Zeitfenstern (<code>after:</code>/<code>before:</code>) in der Sprachausgabe der Quelle (deutsch, englisch bzw. chinesisch); Suchbegriffe: <code>{{ cfg('search_query') }}</code>, für chinesische Quellen <code>{{ cfg('search_query_zh') }}</code></td></tr>
   <tr><td>Archivseiten</td><td>lückenlose Historie</td><td>URL-Vorlagen mit Datum (Tag/Woche/Monat); für relevante Treffer werden Teaser und genaues Datum aus den Meta-Tags der Artikelseite gelesen</td></tr>
   <tr><td>Internet Archive</td><td>Historie auch ohne eigenes Archiv</td><td>archivierte Schnappschüsse der Feeds; außerdem Ersatz, wenn eine Archivseite nicht erreichbar ist</td></tr>
   </tbody>
@@ -58,9 +60,10 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
 <p>Zwischen zwei Anfragen an denselben Server liegen mindestens {{ cfg('host_delay_seconds') }} s (Internet Archive
 {{ cfg('wayback_delay_seconds') }} s). Bei Ratelimits (HTTP 429/503) wird einmal gewartet und wiederholt.</p>
 <table>
-  <thead><tr><th>Medium</th><th>Feeds</th><th>Archiv</th><th>Suche</th></tr></thead>
+  <thead><tr><th>Medium</th><th>Sprache</th><th>Feeds</th><th>Archiv</th><th>Suche</th></tr></thead>
   <tbody>{% for s in sources %}
   <tr><td>{{ s.name }}{% if not s.enabled %} <span class="badge">aus</span>{% endif %}</td>
+      <td class="small">{{ languages.get(s.language, s.language) }}</td>
       <td class="small">{{ s.feeds.splitlines()|length }}</td>
       <td class="small">{{ s.archive_step ~ ' ab ' ~ (s.archive_since or 'Zeitraumbeginn') if s.archive_template else '–' }}</td>
       <td class="small">{{ 'ja' if s.use_search else 'nein' }}</td></tr>
@@ -80,6 +83,12 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
     Suchfenstern von {{ cfg('backfill_search_window_days') }} Tagen und Internet-Archive-Schnappschüssen. Die Reihenfolge
     ist <em>grob nach fein</em>: erst jede 32. Periode über den ganzen Zeitraum, dann immer dichter. Ein Überblick über
     alle Jahre entsteht also früh. Jede Aufgabe wird in der Datenbank abgehakt; Neustarts schaden nicht.</li>
+  <li><strong>Nach einem Update des Images</strong> gleicht nnign beim Neustart den Datenbestand automatisch ab:
+    neue Standardquellen werden angelegt, für sie wird der aktuelle Zeitraum wie beim Initial-Scan nachgeholt und die
+    Historie des Erfassungszeitraums eingeplant. Standardquellen, die der Admin nicht verändert hat, übernehmen
+    geänderte Vorgaben (z. B. neue Feed-Adressen); vom Admin bearbeitete oder gelöschte Quellen bleiben, wie sie sind.
+    Haben sich die Bewertungsregeln geändert, werden alle Meldungen neu bewertet. Was geschehen ist, steht unter
+    <a href="/admin#laeufe">Admin → Letzte Scans</a> als Lauf „aktualisierung“.</li>
   <li><strong>Abbruchsicherung:</strong> liefert eine Archivquelle {{ breaker }}-mal in Folge nichts (z. B. weil sich
     eine URL geändert hat), werden ihre restlichen Aufgaben gestoppt und im Admin-Bereich angezeigt.</li>
 </ul>
@@ -110,7 +119,46 @@ Themen, deren Meldungen höchstens {{ cfg('cluster_window_days') }} Tage entfern
 </ul>
 <p>Falsch zusammengefasste Themen lassen sich auf der Themenseite trennen („abtrennen“) oder per Themen-ID zusammenführen.</p>
 
-<h2 id="bewertung">6. Bewertung positiv / neutral / negativ</h2>
+<h2 id="sprachen">6. Fremdsprachige Quellen und Übersetzung</h2>
+<p>Neben deutschen Medien wertet nnign auch englischsprachige (z. B. Reuters, Bloomberg, Automotive News, Caixin Global,
+CnEVPost) und auf Wunsch chinesische Quellen aus. Die Sprache ist je Quelle hinterlegt (Admin → Quellen); zusätzlich
+erkennt nnign die Sprache jeder Meldung am Text. <strong>Angezeigt wird alles auf Deutsch</strong>, sofern ein Übersetzer
+verfügbar ist. Übersetzt werden Titel und Teaser beim Speichern; das Original bleibt erhalten und ist auf der Themenseite
+unter „Original“ einsehbar. Fremdsprachige Meldungen tragen ein Kennzeichen wie <span class="lang">EN→DE</span>
+(übersetzt) oder <span class="lang">EN</span> (nicht übersetzt).</p>
+<p>Aktuell: <strong>{{ translate_status }}</strong>.</p>
+<table>
+  <thead><tr><th>Übersetzer</th><th>API-Key?</th><th>Einrichtung</th><th>Bemerkung</th></tr></thead>
+  <tbody>
+  <tr><td>LibreTranslate</td><td>nein</td><td>zweiter Container: <code>docker compose --profile uebersetzung up -d</code>,
+    dann <code>LIBRETRANSLATE_URL=http://libretranslate:5000</code></td><td>freie Software, läuft komplett lokal; Qualität
+    ordentlich, bei Chinesisch schwächer. Erster Start lädt die Sprachmodelle (einige 100 MB).</td></tr>
+  <tr><td>Lokales Sprachmodell (Ollama)</td><td>nein</td><td><code>LLM_PROVIDER=ollama</code>, <code>LLM_MODEL=…</code>
+    (siehe <a href="#ki">KI-Analyse</a>)</td><td>übernimmt dann auch Bewertung und Themenbildung; braucht einen
+    leistungsfähigen Rechner.</td></tr>
+  <tr><td>DeepL</td><td>ja (kostenlos)</td><td><code>DEEPL_API_KEY</code></td><td>sehr gute Qualität; der Free-Tarif
+    erlaubt 500.000 Zeichen im Monat – reicht für Titel und Teaser meist aus.</td></tr>
+  <tr><td>KI-Anbieter</td><td>je nach Anbieter</td><td>wie unter <a href="#ki">KI-Analyse</a></td><td>ein Aufruf je
+    Gruppe von Meldungen; zählt gegen das Tageslimit der KI-Aufrufe. Im Backfill nur, wenn „KI auch für historischen
+    Backfill“ an ist.</td></tr>
+  <tr><td>keiner</td><td>–</td><td><code>translate_provider = none</code> oder nichts eingerichtet</td><td>Texte bleiben
+    im Original. Relevanz, Themenbildung und Bewertung funktionieren trotzdem (eigene englische und chinesische
+    Regeln).</td></tr>
+  </tbody>
+</table>
+<p>„auto“ (Standard) nimmt den ersten verfügbaren in der Reihenfolge LibreTranslate → DeepL → KI. Wird ein Übersetzer
+erst später eingerichtet, übersetzt nnign bereits gespeicherte Meldungen im Hintergrund nach (oder sofort über
+„Jetzt nachübersetzen“ im Admin-Bereich).</p>
+<p><strong>Chinesisch:</strong> Chinesisch kennt keine Wortgrenzen. Relevanz wird daher über eindeutige Schreibweisen
+geprüft (z. B. 大众汽车, 上汽大众, 一汽-大众; „大众“ allein bedeutet auch „Öffentlichkeit“ und zählt nicht), die
+Themenbildung nutzt Zeichenpaare. Hinweis: Caixin Global und CnEVPost berichten zwar über China, erscheinen aber auf
+Englisch. Chinesischsprachige Medien lassen sich als Quelle mit Sprache „Chinesisch“ ergänzen.</p>
+<p><strong>Bewertung:</strong> Übersetzte Meldungen werden mit den deutschen Regeln bewertet. Unübersetzte englische bzw.
+chinesische Meldungen nutzen eigene, kleinere Regelsätze mit denselben Kategorien (z. B. <em>recall</em>/召回 = Rückruf,
+<em>delay</em>/推迟 = Verzögerung, <em>sales rise</em>/销量增长 = Kennzahl + Richtung). Sie sind weniger umfangreich als die
+deutschen; mit Übersetzer oder KI ist die Bewertung verlässlicher.</p>
+
+<h2 id="bewertung">7. Bewertung positiv / neutral / negativ</h2>
 <h3>Bedeutung</h3>
 <table>
   <tbody>
@@ -244,7 +292,7 @@ Admin-Bereich anpassen – oder die Zahlen einfach mit der gebotenen Vorsicht le
   <li><strong>Manuelle Korrektur</strong> auf der Themenseite („Bearbeiten“) sperrt das Thema gegen automatische Änderungen.</li>
 </ul>
 
-<h2 id="ki">7. KI-Analyse und Prompt</h2>
+<h2 id="ki">8. KI-Analyse und Prompt</h2>
 <p>Status: <strong>{{ llm_status }}</strong>. Ohne KI arbeitet nnign vollständig mit dem Regelwerk.
 Mit KI ersetzt das Modell bei neuen Themen Kurztitel, Abstract und Bewertung und entscheidet über die Zuordnung.
 Das Regelwerk läuft trotzdem mit; seine Signale werden zusätzlich gespeichert.</p>
@@ -311,7 +359,7 @@ füllen muss.</p>
   <li>Antworten außerhalb des Formats werden verworfen (regelbasiert weiter). Steckt das JSON in einem Codeblock, wird es herausgelöst.</li>
 </ul>
 
-<h2 id="statistik">8. Statistik</h2>
+<h2 id="statistik">9. Statistik</h2>
 <p>Der Kasten „Datenbestand“ auf der Startseite bezieht sich immer auf die aktuelle Auswahl (Filter, Jahr, Suche).</p>
 <table><tbody>
   <tr><td>Themen</td><td>Anzahl Themen in der Auswahl (ausgeblendete Themen zählen nicht).</td></tr>
@@ -327,7 +375,7 @@ füllen muss.</p>
 <p>Der Zeitstrahl zeigt je Jahr (nach Klick je Monat) positive Themen nach oben, neutrale mittig auf der Nulllinie und
 negative nach unten. Solange der Historie-Abruf läuft, ist die Historie unvollständig; die Anteile sind dann eine Stichprobe.</p>
 
-<h2 id="daten">9. Datenverwaltung im Admin-Bereich</h2>
+<h2 id="daten">10. Datenverwaltung im Admin-Bereich</h2>
 <table><tbody>
   <tr><td>Zeitraum ändern</td><td>„von“/„bis“ setzen. Früheres „von“ plant den Abruf der zusätzlichen Historie ein,
     späteres stoppt offene Abrufe davor. Optional werden vorhandene Daten außerhalb gelöscht.</td></tr>
@@ -338,9 +386,11 @@ negative nach unten. Solange der Historie-Abruf läuft, ist die Historie unvolls
   <tr><td>Neu initialisieren</td><td>löscht alle erfassten Daten und startet einen neuen Initial-Scan; wahlweise mit
     Werkseinstellungen (Standard-Zeitraum vier Wochen, Standard-Quellen; das Admin-Passwort bleibt). Bestätigung durch Eintippen von LÖSCHEN.</td></tr>
   <tr><td>Bewertungen neu berechnen</td><td>wendet geänderte Bewertungsregeln auf den Bestand an.</td></tr>
+  <tr><td>Übersetzung testen / Jetzt nachübersetzen</td><td>prüft den eingerichteten Übersetzer bzw. übersetzt noch
+    nicht übersetzte fremdsprachige Meldungen sofort.</td></tr>
 </tbody></table>
 
-<h2 id="einstellungen">10. Alle Einstellungen</h2>
+<h2 id="einstellungen">11. Alle Einstellungen</h2>
 <p>Rangfolge: Wert aus dem Admin-Bereich &gt; Umgebungsvariable &gt; Standard. Leere Umgebungsvariablen gelten als nicht gesetzt.</p>
 <table>
   <thead><tr><th>Einstellung</th><th>Umgebungsvariable</th><th>Standard</th></tr></thead>
@@ -354,7 +404,7 @@ negative nach unten. Solange der Historie-Abruf läuft, ist die Historie unvolls
 (<code>HTTPS_PROXY</code>) und die API-Key-Variablen der KI-Anbieter
 ({% for n, p in providers.items() if p.key_env %}{{ p.key_env|join(', ') }}{{ ', ' if not loop.last }}{% endfor %}), dazu <code>AZURE_OPENAI_ENDPOINT</code>, <code>OLLAMA_HOST</code>.</p>
 
-<h2 id="api">11. Schnittstellen</h2>
+<h2 id="api">12. Schnittstellen</h2>
 <table><tbody>
   <tr><td><code>/api/topics</code></td><td>Themen als JSON (Filter wie auf der Startseite: <code>q</code>, <code>sentiment</code>, <code>year</code>, <code>source</code>, <code>date_from</code>, <code>date_to</code>, <code>page</code>, <code>size</code>, <code>order</code>)</td></tr>
   <tr><td><code>/api/topics/{id}</code></td><td>ein Thema mit allen Meldungen und Begründung</td></tr>
@@ -365,7 +415,7 @@ negative nach unten. Solange der Historie-Abruf läuft, ist die Historie unvolls
   <tr><td><code>/docs</code></td><td>automatisch erzeugte technische API-Dokumentation</td></tr>
 </tbody></table>
 
-<h2 id="grenzen">12. Grenzen und Hinweise</h2>
+<h2 id="grenzen">13. Grenzen und Hinweise</h2>
 <ul>
   <li>Bewertungen sind automatisch erzeugt und können irren – insbesondere bei Ironie, Zitaten, Meldungen mit vielen
     Aspekten oder wenn nur der Titel vorliegt. Die Begründung auf der Themenseite zeigt, worauf die Bewertung beruht.</li>
@@ -374,6 +424,7 @@ negative nach unten. Solange der Historie-Abruf läuft, ist die Historie unvolls
   <li>Freie Archive haben Lücken (z. B. depublizierte Inhalte, Bezahlschranken). Die Historie ist daher eine
     möglichst breite, aber keine vollständige Erfassung.</li>
   <li>Gespeichert werden nur Titel, Teaser und Links, keine Volltexte.</li>
+  <li>Maschinelle Übersetzungen können Fachbegriffe, Zahlen oder Nuancen verfälschen; im Zweifel das Original lesen.</li>
 </ul>
 </article>
 {% endblock %}

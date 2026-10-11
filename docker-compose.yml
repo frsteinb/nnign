@@ -41,6 +41,12 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OLLAMA_HOST: ${OLLAMA_HOST:-}
+      # Übersetzung englischer/chinesischer Meldungen ins Deutsche (optional, siehe /doku#sprachen):
+      #   ohne API-Key: COMPOSE_PROFILES=uebersetzung und LIBRETRANSLATE_URL=http://libretranslate:5000 in .env
+      LIBRETRANSLATE_URL: ${LIBRETRANSLATE_URL:-}
+      LIBRETRANSLATE_API_KEY: ${LIBRETRANSLATE_API_KEY:-}
+      DEEPL_API_KEY: ${DEEPL_API_KEY:-}        # Alternative: DeepL (kostenloser Tarif reicht meist)
+      NNIGN_TRANSLATE_PROVIDER: ${NNIGN_TRANSLATE_PROVIDER:-}   # auto | libretranslate | deepl | llm | none
       # Vorbelegungen (leer = eingebauter Standard)
       NNIGN_SCAN_INTERVAL_HOURS: ${NNIGN_SCAN_INTERVAL_HOURS:-}
       NNIGN_COLLECT_SINCE: ${NNIGN_COLLECT_SINCE:-}      # leer = beim Erststart die letzten vier Wochen
@@ -58,3 +64,26 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Optionaler, freier Übersetzungsserver (kein API-Key). Startet nur mit dem Profil „uebersetzung“:
+  #   docker compose --profile uebersetzung up -d   (oder COMPOSE_PROFILES=uebersetzung in .env)
+  # Der erste Start lädt die Sprachmodelle (einige 100 MB) und dauert einige Minuten.
+  libretranslate:
+    image: libretranslate/libretranslate:${LIBRETRANSLATE_TAG:-latest}
+    container_name: nnign-libretranslate
+    profiles: ["uebersetzung"]
+    restart: unless-stopped
+    environment:
+      # Nur benötigte Sprachen laden. Startet der Container damit nicht, „en,de,zh“ versuchen.
+      LT_LOAD_ONLY: ${LT_LOAD_ONLY:-en,de,zh-Hans}
+      LT_UPDATE_MODELS: "true"
+    volumes:
+      - libretranslate-models:/home/libretranslate/.local   # Sprachmodelle bleiben über Neustarts erhalten
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  libretranslate-models:

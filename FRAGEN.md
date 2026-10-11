@@ -153,6 +153,22 @@ Antwort:
 
 ---
 
+## G. Fremdsprachige Quellen (seit 1.2.0)
+
+**G1. Welcher Übersetzer soll Standard sein?** LibreTranslate (lokal, ohne Key, mittlere Qualität),
+DeepL (Key im Free-Tarif, beste Qualität) oder der KI-Anbieter?
+Antwort:
+
+**G2. Sollen echte chinesischsprachige Medien dazu?** (z. B. Caixin chinesisch, Sina Auto, 36Kr; Caixin
+Global und CnEVPost sind englischsprachig) Falls ja, welche?
+Antwort:
+
+**G3. Sind Reuters und Bloomberg trotz Bezahlschranke sinnvoll?** Gespeichert werden nur Titel/Teaser;
+Leser landen ggf. vor einer Paywall.
+Antwort:
+
+---
+
 ## F. Sonstiges
 
 **F1. Was fehlt Ihnen nach dem ersten Blick auf die Oberfläche?**

@@ -10,6 +10,8 @@
     <label>Archiv-Schritt
       <select name="archive_step">{% for v in ['day','week','month','year'] %}<option {{ 'selected' if s and s.archive_step == v }}>{{ v }}</option>{% endfor %}</select></label>
     <label>Archiv ab (JJJJ-MM-TT) <input name="archive_since" value="{{ s.archive_since if s else '' }}"></label>
+    <label>Sprache
+      <select name="language">{% for code, name in languages.items() %}<option value="{{ code }}" {{ 'selected' if (s.language if s else 'de') == code }}>{{ name }}</option>{% endfor %}</select></label>
   </div>
   <label class="inline"><input type="checkbox" name="use_search" {{ 'checked' if not s or s.use_search }}> Nachrichtensuche (site:domain) nutzen</label>
   <label class="inline"><input type="checkbox" name="enabled" {{ 'checked' if not s or s.enabled }}> aktiv</label>

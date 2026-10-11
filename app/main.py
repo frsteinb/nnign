@@ -21,14 +21,14 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, db, llm, pipeline, prompts, sentiment, sources, topics
+from . import config, db, llm, pipeline, prompts, sentiment, sources, topics, translate
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -138,6 +138,9 @@ templates.env.filters["dt"] = fmt_dt
 templates.env.filters["d"] = lambda v: fmt_dt(v, "%d.%m.%Y")
 templates.env.globals["version"] = VERSION
 templates.env.globals["symbol"] = {"positiv": "▲", "neutral": "●", "negativ": "▼"}
+templates.env.globals["languages"] = sources.LANGUAGES
+templates.env.globals["lang_short"] = {"en": "EN", "zh": "ZH"}
+templates.env.globals["translator_names"] = {"libretranslate": "LibreTranslate", "deepl": "DeepL", "llm": "KI"}
 
 
 # ====================================================================== Abfragen
@@ -262,6 +265,12 @@ def status_info() -> dict:
         "llm_status": llm.describe(),
         "llm_calls_today": llm.calls_today(),
         "reclassify_running": pipeline.STATUS.get("reclassify"),
+        "translate_status": translate.describe(),
+        "foreign": {r["lang"]: {"n": r["n"], "done": r["done"]} for r in db.query(
+            "SELECT lang, COUNT(*) n, SUM(translated_by!='') done FROM articles WHERE relevant=1 AND lang!='de' "
+            "GROUP BY lang")},
+        "pending_catchup": config.state_get("pending_catchup") or [],
+        "pending_reclassify": bool(config.state_get("pending_reclassify")),
     }
 
 
@@ -346,6 +355,7 @@ def doku(request: Request, _=Depends(maybe_public)):
         "settings_rows": settings_rows, "cfg": config.get, "sources": sources.all_sources(),
         "since": since.isoformat(), "until": until.isoformat() if until else "",
         "default_days": pipeline.DEFAULT_PERIOD_DAYS, "breaker": pipeline.BREAKER_LIMIT,
+        "translate_status": translate.describe(),
     })
 
 
@@ -364,7 +374,9 @@ def topic_json(t) -> dict:
         "bewertung_begruendung": _json(t["sentiment_detail"]),
         "erstes_datum": t["first_published_at"], "letztes_datum": t["last_published_at"],
         "anzahl_meldungen": t["article_count"],
-        "quellen": [{"medium": a["source_name"], "titel": a["title"], "url": a["url"], "datum": a["published_at"]}
+        "quellen": [{"medium": a["source_name"], "titel": a["title"], "url": a["url"], "datum": a["published_at"],
+                     "sprache": a["lang"], "titel_original": a["title_orig"] or None,
+                     "uebersetzt_von": a["translated_by"] or None}
                     for a in topic_sources(t["id"])],
     }
 
@@ -503,6 +515,7 @@ def _source_form(form) -> tuple:
     return (name, domain, (form.get("feeds") or "").strip(), 1 if form.get("use_search") == "on" else 0,
             (form.get("archive_template") or "").strip(), form.get("archive_step") or "day",
             (form.get("archive_since") or "").strip(), (form.get("link_pattern") or "").strip(),
+            form.get("language") if form.get("language") in sources.LANGUAGES else "de",
             1 if form.get("enabled") == "on" else 0)
 
 
@@ -511,7 +524,7 @@ async def admin_source_add(request: Request, _=Depends(require_admin)):
     vals = _source_form(await request.form())
     with db.tx() as conn:
         conn.execute("INSERT INTO sources(name, domain, feeds, use_search, archive_template, archive_step, "
-                     "archive_since, link_pattern, enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     "archive_since, link_pattern, language, enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                      (*vals, db.utcnow()))
     return back("Quelle angelegt – Backfill ggf. neu planen", "quellen")
 
@@ -521,7 +534,7 @@ async def admin_source_update(sid: int, request: Request, _=Depends(require_admi
     vals = _source_form(await request.form())
     with db.tx() as conn:
         conn.execute("UPDATE sources SET name=?, domain=?, feeds=?, use_search=?, archive_template=?, "
-                     "archive_step=?, archive_since=?, link_pattern=?, enabled=? WHERE id=?", (*vals, sid))
+                     "archive_step=?, archive_since=?, link_pattern=?, language=?, enabled=? WHERE id=?", (*vals, sid))
     return back("Quelle gespeichert", "quellen")
 
 
@@ -622,6 +635,18 @@ def admin_reclassify(_=Depends(require_admin)):
 @app.post("/admin/llm-test")
 def admin_llm_test(_=Depends(require_admin)):
     return back("KI-Test: " + llm.test_connection(), "einstellungen")
+
+
+@app.post("/admin/translate-test")
+def admin_translate_test(_=Depends(require_admin)):
+    return back("Übersetzungs-Test: " + translate.test_connection(), "einstellungen")
+
+
+@app.post("/admin/translate-pending")
+def admin_translate_pending(_=Depends(require_admin)):
+    n = pipeline.translate_pending(limit=500)
+    return back(f"{n} Meldungen nachübersetzt" if n else "Nichts nachzuübersetzen bzw. kein Übersetzer verfügbar – "
+                + translate.describe())
 
 
 @app.post("/admin/password")

@@ -34,7 +34,7 @@
   </details>
   <h2>Quellen</h2>
   <ol class="srclist">
-    {% for a in sources %}<li><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.source_name }}: {{ a.title }}</a> <span class="muted">{{ a.published_at|d }}</span></li>{% endfor %}
+    {% for a in sources %}<li><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.source_name }}: {{ a.title }}</a>{% include "lang_tag.html" %} <span class="muted">{{ a.published_at|d }}</span></li>{% endfor %}
   </ol>
 </article>
 
@@ -47,8 +47,10 @@
       <tr>
         <td>{{ a.published_at|d }}</td>
         <td>{{ a.source_name }}</td>
-        <td><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.title }}</a>
-          {% if a.summary %}<div class="muted small">{{ a.summary[:300] }}</div>{% endif %}</td>
+        <td><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.title }}</a>{% include "lang_tag.html" %}
+          {% if a.summary %}<div class="muted small">{{ a.summary[:300] }}</div>{% endif %}
+          {% if a.title_orig %}<details class="orig small"><summary>Original ({{ languages.get(a.lang, a.lang) }})</summary>
+            <div lang="{{ a.lang }}">{{ a.title_orig }}</div>{% if a.summary_orig %}<div class="muted" lang="{{ a.lang }}">{{ a.summary_orig[:300] }}</div>{% endif %}</details>{% endif %}</td>
         <td><span class="badge {{ art_labels[a.id] }}" title="Regelbewertung dieser einzelnen Meldung">{{ symbol[art_labels[a.id]] }}</span></td>
         <td class="muted">{{ a.via }}</td>
         <td>{% if articles|length > 1 %}

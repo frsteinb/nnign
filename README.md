@@ -110,6 +110,31 @@ immer dichter. So steht schon nach kurzer Zeit ein Überblick über alle Jahre, 
 verfeinert. Archivquellen, die dauerhaft nichts liefern (z. B. weil sich eine URL geändert hat),
 werden nach 15 Fehlschlägen in Folge automatisch gestoppt und im Admin-Bereich angezeigt.
 
+Quellen: 16 deutschsprachige Medien (u. a. tagesschau, SPIEGEL, ZEIT, FAZ, SZ, Handelsblatt,
+Braunschweiger Zeitung) und 5 englischsprachige (Reuters, Bloomberg, Automotive News, Caixin Global,
+CnEVPost). Weitere – auch chinesischsprachige – lassen sich im Admin-Bereich mit ihrer Sprache anlegen.
+
+## Fremdsprachige Meldungen
+
+Angezeigt wird alles auf Deutsch. Englische und chinesische Titel/Teaser werden beim Speichern übersetzt,
+das Original bleibt auf der Themenseite einsehbar. Übersetzer (Auswahl „auto“ nimmt den ersten verfügbaren):
+
+| Übersetzer | API-Key | Einrichtung |
+|---|---|---|
+| LibreTranslate (freier Container) | nein | in `.env`: `COMPOSE_PROFILES=uebersetzung` und `LIBRETRANSLATE_URL=http://libretranslate:5000` |
+| DeepL | ja, kostenloser Tarif | `DEEPL_API_KEY=…` |
+| KI-Anbieter (auch Ollama lokal) | je nach Anbieter | wie bei der KI-Analyse |
+| keiner | – | Texte bleiben im Original; Relevanz und Bewertung laufen mit eigenen englischen/chinesischen Regeln |
+
+## Updates
+
+Nach einem neuen Image (`git pull && docker compose up -d --build`) gleicht nnign beim Start den
+Datenbestand ab: neue Standardquellen werden angelegt und für den Erfassungszeitraum nachgeholt,
+unveränderte Standardquellen übernehmen geänderte Vorgaben (z. B. Feed-URLs), bei geänderten
+Bewertungsregeln wird der Bestand neu bewertet, und noch unübersetzte Meldungen werden nachübersetzt.
+Vom Admin bearbeitete oder gelöschte Quellen bleiben unangetastet. Protokoll: Admin → Letzte Scans
+(Lauf „aktualisierung“).
+
 ## Daten
 
 Alles liegt in einer SQLite-Datei unter `./data/nnign.sqlite3` (Volume `/data`). Sichern = Datei

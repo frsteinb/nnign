@@ -133,7 +133,7 @@
     <h3><a href="/thema/{{ t.id }}">{{ t.title }}</a></h3>
     {% if t.abstract %}<p>{{ t.abstract }}</p>{% endif %}
     <div class="srcs">
-      {% for a in it.sources %}<a href="{{ a.url }}" target="_blank" rel="noopener noreferrer" title="{{ a.title }}">{{ a.source_name }}</a>{% endfor %}
+      {% for a in it.sources %}<a href="{{ a.url }}" target="_blank" rel="noopener noreferrer" title="{{ a.title }}">{{ a.source_name }}{% if a.lang and a.lang != 'de' %} <span class="lang">{{ lang_short.get(a.lang, a.lang|upper) }}</span>{% endif %}</a>{% endfor %}
     </div>
   </li>
 {% endfor %}

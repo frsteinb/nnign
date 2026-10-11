@@ -201,3 +201,32 @@ def test_upgrade_on_start_reclassifies_after_rule_change(env):
     config.state_set("rules_fingerprint", "alt")
     notes = pipeline.upgrade_on_start({})
     assert notes and config.state_get("pending_reclassify") is True
+
+
+def test_ui_shows_language_and_original(env):
+    import os
+    from fastapi.testclient import TestClient
+    from app import config, db, main, pipeline
+    _english_world(env)
+    _libre(env)
+    config.set("libretranslate_url", env.base)
+    pipeline.run_scan("initial")
+    os.environ["ADMIN_PASSWORD"] = "geheim123"
+    auth = ("admin", "geheim123")
+    with TestClient(main.app) as c:
+        tid = db.query_one("SELECT id FROM topics")["id"]
+        page = c.get(f"/thema/{tid}").text
+        assert "EN→DE" in page and "Original (Englisch)" in page and EN_FEED[0]["title"] in page
+        assert "EN" in c.get("/").text
+        api = c.get(f"/api/topics/{tid}").json()
+        assert api["quellen"][0]["sprache"] == "en" and api["quellen"][0]["uebersetzt_von"] == "libretranslate"
+        doc = c.get("/doku").text
+        assert "Fremdsprachige Quellen und Übersetzung" in doc and "aktiv: LibreTranslate" in doc
+        admin = c.get("/admin", auth=auth).text
+        assert "Übersetzung testen" in admin and "Englisch: 1 Meldungen, davon 1 übersetzt" in admin
+        r = c.post("/admin/translate-test", auth=auth, headers={"origin": "http://testserver"})
+        assert r.status_code == 200 and "OK (LibreTranslate)" in r.text
+        sid = db.query_one("SELECT id FROM sources WHERE domain='localhost'")["id"]
+        c.post(f"/admin/sources/{sid}", auth=auth, headers={"origin": "http://testserver"},
+               data={"name": "Test ZH", "domain": "localhost", "language": "zh", "enabled": "on"})
+        assert db.query_one("SELECT language FROM sources WHERE id=?", (sid,))["language"] == "zh"
