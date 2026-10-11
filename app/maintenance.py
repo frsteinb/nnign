@@ -22,7 +22,7 @@ import math
 import time
 from datetime import date, datetime, timedelta, timezone
 
-from . import classify, config, db, gapfill, hubs, llm, refine, sentiment, topics, translate
+from . import classify, config, db, fetcher, gapfill, hubs, llm, refine, sentiment, topics, translate
 
 log = logging.getLogger(__name__)
 
@@ -640,7 +640,8 @@ STATES = {   # Zustand -> (Anzeige, Bedeutung)
     "run": ("läuft", "arbeitet gerade"),
     "ok": ("fertig", "alles erledigt – wartet auf Neues"),
     "queued": ("geplant", "startet von selbst in Kürze"),
-    "limit": ("pausiert", "Limit des Anbieters erreicht – macht danach selbst weiter"),
+    "limit": ("Limit erreicht", "Rate- oder Tageslimit des Anbieters – nnign wartet und macht danach selbst weiter"),
+    "ready": ("bereit", "erreichbar und einsatzbereit"),
     "paused": ("angehalten", "vom Admin angehalten"),
     "confirm": ("wartet auf Bestätigung", "aufwendig – oben unter „Vorschläge“ bestätigen"),
     "problem": ("Problem", "funktioniert gerade nicht – siehe Details"),
@@ -752,6 +753,10 @@ def jobs() -> list[dict]:
         details = (f"nächster Abruf um {_hhmm(nxt.timestamp())} (alle {config.get('scan_interval_hours'):g} Std.)")
         if bad:
             details += f" · {len(bad)} Quelle(n) mit Fehlern: {', '.join(bad[:3])}{' …' if len(bad) > 3 else ''}"
+        lim = (fetcher.backend_stats().get("search") or {}).get("last_limit")
+        if lim and _age_s(lim) < LIMIT_RECENT_S:
+            state = "limit"
+            details = f"Nachrichtensuche meldet Rate-Limit ({_ago(lim)}) – Abruf läuft gedrosselt weiter · " + details
     add("Abruf", "scan", "Aktuelle Meldungen (Feeds und Suche)", state, _ago(run["started_at"] if run else None),
         numbers, details, [("Jetzt abrufen", "/admin/scan", "")])
 
@@ -991,6 +996,16 @@ def work() -> None:
 
 # ---------------------------------------------------------------------------------- Abrufwege und Dienste
 
+LIMIT_RECENT_S = 1800
+
+
+def _age_s(iso: str) -> float:
+    try:
+        return (_now() - datetime.fromisoformat(iso)).total_seconds()
+    except (TypeError, ValueError):
+        return 1e9
+
+
 def _later(a: str | None, b: str | None) -> str | None:
     return max((x for x in (a, b) if x), default=None)
 
@@ -1002,7 +1017,6 @@ PROVIDER_NAMES = {"anthropic": "Anthropic Claude", "openai": "OpenAI", "azure": 
 
 def backends() -> list[dict]:
     """Abrufwege (Web, Suche, Wayback) und KI-/Übersetzungsdienste mit Zustand, letztem Zugriff und Zahlen."""
-    from . import fetcher
     out: list[dict] = []
 
     def add(group, key, name, state, last, numbers, details, actions=()):
@@ -1031,18 +1045,20 @@ def backends() -> list[dict]:
                         f"gesamt {gapfill.fmt_bytes(s['bytes_total'])}")
         numbers += extra.get(key, "")
         err_after_ok = s.get("last_err") and (not s.get("last_ok") or s["last_err"] > s["last_ok"])
-        recent_limit = s.get("last_limit") and (not s.get("last_ok") or s["last_limit"] > s["last_ok"])
+        # ein Limit gilt 30 Minuten lang als aktuell, auch wenn einzelne Abrufe danach wieder gelangen
+        recent_limit = s.get("last_limit") and (not s.get("last_ok") or s["last_limit"] > s["last_ok"]
+                                                or _age_s(s["last_limit"]) < LIMIT_RECENT_S)
         if not use.get(key, True):
             state, details = "inactive", "in den Einstellungen abgeschaltet"
         elif not last:
             state, details = "queued", "noch kein Zugriff – wird beim nächsten passenden Abruf genutzt"
         elif recent_limit:
-            state, details = "limit", (f"Anbieter bremst (HTTP {s.get('last_err_status')}) – nnign wartet automatisch "
-                                       "länger zwischen den Abrufen und macht weiter")
+            state, details = "limit", (f"Rate-Limit {_ago(s['last_limit'])} (HTTP {s.get('last_err_status') or 429}) – "
+                                       "nnign wartet automatisch länger zwischen den Abrufen und macht weiter")
         elif err_after_ok and (err_n > 3 * max(ok_n, 1) or not s.get("last_ok")):
             state, details = "problem", f"zuletzt fehlgeschlagen: {s.get('last_err_msg') or 'unbekannter Fehler'}"
         else:
-            state = "ok"
+            state = "ready"
             details = "erreichbar"
             if s.get("last_err_msg"):
                 details += f" · letzter Fehler {_ago(s.get('last_err'))}: {s['last_err_msg']}"
@@ -1068,10 +1084,15 @@ def backends() -> list[dict]:
             details = f"{reason} – weiter ab {_hhmm(until)} Uhr"
         elif r.get("kind") in ("auth", "error", "offline", "bad_answer"):
             state, details = "problem", llm.describe_result(r)
+        elif slot == "primary" and llm.budget_left() <= 0:
+            state, details = "limit", (f"eigenes Tageslimit ({int(config.get('llm_max_calls_per_day'))} Aufrufe) erreicht – "
+                                       f"weiter ab {_hhmm(llm._next_utc_midnight())} Uhr")
         elif not r:
             state, details = "queued", "noch nicht benutzt"
+        elif r.get("kind") == "limit":       # Pause abgelaufen, aber noch keine erfolgreiche Antwort seitdem
+            state, details = "limit", "letzte Antwort: " + llm.describe_result(r) + " – nächster Versuch automatisch"
         else:
-            state, details = "ok", "letzte Antwort: " + llm.describe_result(r)
+            state, details = "ready", "letzte Antwort: " + llm.describe_result(r)
         details = lead(purpose, mdl if prov else "") + details
         add("KI-Dienste", "be-llm-" + slot, name, state, _ago(r.get("at")), numbers, details,
             [("Testen", "/admin/llm-test", "secondary")] if slot == "primary" and not miss else [])
@@ -1084,8 +1105,10 @@ def backends() -> list[dict]:
         details = f"{classify._zs_pause['reason']} – weiter ab {_hhmm(classify._zs_pause['until'])} Uhr"
     elif classify._zs_pause.get("error"):
         state, details = "problem", classify._zs_pause["error"]
+    elif classify._zs_calls_today() >= int(config.get("zeroshot_max_calls_per_day")):
+        state, details = "limit", classify.zs_status()
     else:
-        state, details = "ok", classify.zs_status()
+        state, details = "ready", classify.zs_status()
     details = lead("Bewertung per Entscheidungsmodell (Zero-Shot), z. B. solange die KI pausiert",
                    config.get("zeroshot_model")) + details
     add("KI-Dienste", "be-zeroshot", "Hugging Face", state,
@@ -1105,7 +1128,7 @@ def backends() -> list[dict]:
     elif translate.last_problem.recent(1):
         state, details = "problem", translate.last_problem.recent(1)
     else:
-        state, details = "ok", f"genutzt: {translate.NAMES[prov]}" + (f" (unter {lt})" if prov == "libretranslate" else "")
+        state, details = "ready", f"genutzt: {translate.NAMES[prov]}" + (f" (unter {lt})" if prov == "libretranslate" else "")
     details = lead("fremdsprachige Meldungen ins Deutsche übersetzen") + details
     add("KI-Dienste", "be-translate", translate.NAMES.get(prov) if prov and prov != "llm" else
         ("KI-Übersetzung" if prov == "llm" else "Übersetzer"), state, _ago(config.state_get("translate_last")),

@@ -28,7 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.17.0"
+VERSION = "1.18.0"
 
 
 # ====================================================================== Admin-Passwort

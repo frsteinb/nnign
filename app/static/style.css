@@ -338,7 +338,7 @@ button.small-btn { font-size: 13px; padding: 4px 9px; }
 .state { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
   border: 1px solid var(--line); white-space: nowrap; }
 .state.run { color: var(--accent); border-color: var(--accent); }
-.state.ok { color: var(--ok); border-color: var(--ok); }
+.state.ok, .state.ready { color: var(--ok); border-color: var(--ok); }
 .state.queued { color: var(--accent); border-style: dashed; border-color: var(--accent); }
 .state.limit, .state.confirm { color: var(--warn); border-color: var(--warn); }
 .state.problem { color: #fff; background: var(--neg); border-color: var(--neg); }

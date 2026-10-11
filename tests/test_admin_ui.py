@@ -153,10 +153,21 @@ def test_backends_section(env):
     rows = {r["key"]: r for r in maintenance.backends()}
     assert {"be-web", "be-search", "be-wayback", "be-llm-primary", "be-zeroshot", "be-translate"} <= set(rows)
     assert rows["be-search"]["state"] == "limit" and "1× Limit" in rows["be-search"]["numbers"]
-    assert rows["be-wayback"]["state"] == "ok" and "erfolgreich" in rows["be-wayback"]["numbers"]
+    assert rows["be-wayback"]["state"] == "ready" and "erfolgreich" in rows["be-wayback"]["numbers"]
     assert rows["be-llm-primary"]["state"] == "setup"
-    fetcher._track("search", True)
-    assert {r["key"]: r for r in maintenance.backends()}["be-search"]["state"] == "ok"
+    fetcher._track("search", True)                  # einzelner Erfolg danach: Limit bleibt 30 Min. sichtbar
+    assert {r["key"]: r for r in maintenance.backends()}["be-search"]["state"] == "limit"
+    assert {j["key"]: j for j in maintenance.jobs()}["scan"]["state"] == "limit"
+    fetcher._stats["search"]["last_limit"] = "2020-01-01T00:00:00+00:00"
+    assert {r["key"]: r for r in maintenance.backends()}["be-search"]["state"] == "ready"
+    from app import llm
+    from tests.test_maintenance import GOOD, _answer, _openai_mock
+    _openai_mock(env, lambda b: _answer(GOOD))
+    llm._record("ok")
+    assert {r["key"]: r for r in maintenance.backends()}["be-llm-primary"]["state"] == "ready"
+    llm._record("limit", "Quota exceeded", 429)                      # Pause schon vorbei, aber kein Erfolg seitdem
+    row = {r["key"]: r for r in maintenance.backends()}["be-llm-primary"]
+    assert row["state"] == "limit" and row["state_label"] == "Limit erreicht"
     c = _admin()
     try:
         t = c.get("/fragment/admin-status").text
