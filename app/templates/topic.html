@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ t.title }} – VW-Nachrichtenmonitor{% endblock %}
+{% block content %}
+<p><a href="/">← alle Themen</a></p>
+<article class="card">
+  <div class="meta">
+    <span class="badge {{ t.sentiment }}">{{ '▲' if t.sentiment == 'positiv' else '▼' }} {{ t.sentiment }}</span>
+    <span>Bewertung: {{ t.sentiment_origin }}{% if t.sentiment_origin == 'lexikon' %} (Score {{ t.sentiment_score }}){% endif %}</span>
+    {% if t.hidden %}<span class="badge">ausgeblendet</span>{% endif %}
+  </div>
+  <h1>{{ t.title }}</h1>
+  <dl class="facts">
+    <dt>Erstes Datum</dt><dd>{{ t.first_published_at|dt }}</dd>
+    <dt>Letzte Meldung</dt><dd>{{ t.last_published_at|dt }}</dd>
+    <dt>Erfasst am</dt><dd>{{ t.created_at|dt }}</dd>
+    <dt>Meldungen</dt><dd>{{ t.article_count }}</dd>
+  </dl>
+  {% if t.abstract %}<p class="abstract">{{ t.abstract }}</p>{% else %}<p class="muted">Kein Abstract verfügbar.</p>{% endif %}
+  <h2>Quellen</h2>
+  <ol class="srclist">
+    {% for a in sources %}<li><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.source_name }}: {{ a.title }}</a> <span class="muted">{{ a.published_at|d }}</span></li>{% endfor %}
+  </ol>
+</article>
+
+<section class="card">
+  <h2>Alle Meldungen zu diesem Thema</h2>
+  <table class="list">
+    <thead><tr><th>Datum</th><th>Medium</th><th>Titel</th><th>Weg</th><th></th></tr></thead>
+    <tbody>
+    {% for a in articles %}
+      <tr>
+        <td>{{ a.published_at|d }}</td>
+        <td>{{ a.source_name }}</td>
+        <td><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.title }}</a>
+          {% if a.summary %}<div class="muted small">{{ a.summary[:300] }}</div>{% endif %}</td>
+        <td class="muted">{{ a.via }}</td>
+        <td>{% if articles|length > 1 %}
+          <form method="post" action="/admin/article/{{ a.id }}/detach"><button class="link" title="Als eigenes Thema abtrennen (Admin)">abtrennen</button></form>
+        {% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<details class="card">
+  <summary><strong>Bearbeiten (Admin)</strong></summary>
+  <form method="post" action="/admin/topic/{{ t.id }}" class="stack">
+    <label>Kurzthema <input name="title" value="{{ t.title }}" required></label>
+    <label>Abstract <textarea name="abstract" rows="4">{{ t.abstract }}</textarea></label>
+    <label>Bewertung
+      <select name="sentiment">
+        <option value="positiv" {{ 'selected' if t.sentiment == 'positiv' }}>positiv</option>
+        <option value="negativ" {{ 'selected' if t.sentiment == 'negativ' }}>negativ</option>
+      </select></label>
+    <label class="inline"><input type="checkbox" name="hidden" {{ 'checked' if t.hidden }}> ausblenden</label>
+    <button type="submit">Speichern (sperrt automatische Änderungen)</button>
+  </form>
+  <form method="post" action="/admin/topic/{{ t.id }}/merge" class="row">
+    <label>In Thema-ID zusammenführen <input name="target" type="number" required></label>
+    <button type="submit">Zusammenführen</button>
+  </form>
+  <form method="post" action="/admin/topic/{{ t.id }}/delete" onsubmit="return confirm('Thema löschen? Die Meldungen werden als nicht relevant markiert.')">
+    <button type="submit" class="danger">Thema löschen (nicht relevant)</button>
+  </form>
+</details>
+{% endblock %}

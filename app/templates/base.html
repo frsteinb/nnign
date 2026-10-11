@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}VW-Nachrichtenmonitor{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css?v={{ version }}">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">VW-Nachrichtenmonitor</a>
+  <nav>
+    <a href="/">Themen</a>
+    <a href="/export.csv">CSV</a>
+    <a href="/docs">API</a>
+    <a href="/admin">Admin</a>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>VW-Nachrichtenmonitor {{ version }} · Bewertungen sind automatisch erzeugt und können irren.</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>
