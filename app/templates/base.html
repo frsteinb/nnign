@@ -48,6 +48,28 @@
 })();
 </script>
 <script>
+/* Tasten: ESC = eine Seite zurück (bis zur ungefilterten Startübersicht), „/“ = Suche.
+   Die Übersicht ergänzt Pfeiltasten für die Zeitbalken (window.nnignKeys). */
+document.addEventListener('keydown', function (e) {
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (window.nnignKeys && window.nnignKeys(e)) { e.preventDefault(); return; }
+  var el = document.activeElement;
+  var field = el && (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) || el.isContentEditable);
+  if (e.key === 'Escape') {
+    if (field) { el.blur(); return; }
+    if (document.querySelector('details[open].modal, dialog[open]')) return;
+    if (location.pathname === '/' ) return;
+    e.preventDefault();
+    var ref = document.referrer;
+    if (ref && ref.indexOf(location.origin + '/') === 0 && history.length > 1) history.back();
+    else location.href = '/';
+  } else if (e.key === '/' && !field) {
+    e.preventDefault();
+    location.href = '/#suche';
+  }
+});
+</script>
+<script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(function () {}); });
 }

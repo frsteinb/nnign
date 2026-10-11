@@ -23,9 +23,9 @@
     {% if sx.neg %}<span class="seg neg" style="flex: {{ sx.neg }}" title="{{ sx.neg }} negativ"></span>{% endif %}
   </div>
   <div class="share-legend small">
-    <a href="{{ qs(sentiment='positiv') }}#gefiltert"><span class="dot pos"></span>{{ sx.pos_pct }} % positiv ({{ sx.pos }})</a>
-    <a href="{{ qs(sentiment='neutral') }}#gefiltert"><span class="dot neu"></span>{{ sx.neu_pct }} % neutral ({{ sx.neu }})</a>
-    <a href="{{ qs(sentiment='negativ') }}#gefiltert"><span class="dot neg"></span>{{ sx.neg_pct }} % negativ ({{ sx.neg }})</a>
+    <a data-set="sentiment=positiv" href="{{ qs(sentiment='positiv') }}#gefiltert"><span class="dot pos"></span>{{ sx.pos_pct }} % positiv ({{ sx.pos }})</a>
+    <a data-set="sentiment=neutral" href="{{ qs(sentiment='neutral') }}#gefiltert"><span class="dot neu"></span>{{ sx.neu_pct }} % neutral ({{ sx.neu }})</a>
+    <a data-set="sentiment=negativ" href="{{ qs(sentiment='negativ') }}#gefiltert"><span class="dot neg"></span>{{ sx.neg_pct }} % negativ ({{ sx.neg }})</a>
   </div>
   <div class="facts-inline small muted">
     <span>Top-Medien: {% for m in sx.top_media %}{{ m.name }} {{ m.c }}{{ ', ' if not loop.last }}{% endfor %}</span>
@@ -44,7 +44,7 @@
       {% if year %}<a href="{{ qs(year='') }}#gefiltert">alle Jahre</a>{% endif %}</div>
   </div>
   {% set n = timeline|length %}
-  {% set w = 760 %}{% set h = 220 %}{% set mid = 110 %}{% set pad = 28 %}
+  {% set w = 760 %}{% set h = 220 %}{% set mid = 110 %}{% set pad = 16 + 7 * ('%g'|format(max_v))|length %}
   {% set step = ((w - pad) / (n if n else 1)) %}
   {% set bw = [[step - 2, 2]|max, 44]|min %}{% set off = (step - 2 - bw) / 2 %}
   <div class="chart-wrap">
@@ -59,7 +59,7 @@
       {% set scale = (mid - 10) / max_v %}
       {% set hz = p.neu * scale %}{% set hp = p.pos * scale %}{% set hn = p.neg * scale %}
       {% set label = p.key[5:] if year else p.key %}
-      <a href="{{ qs(year=p.key[:4]) if not year else qs(date_from=p.key ~ '-01', date_to=p.key ~ '-31', year=year) }}#gefiltert">
+      <a class="bar" data-key="{{ p.key }}" data-n="{{ p.pos + p.neu + p.neg }}" aria-label="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ" href="{{ qs(year=p.key[:4]) if not year else qs(date_from=p.key ~ '-01', date_to=p.key ~ '-31', year=year) }}#gefiltert">
       {% set cv = covmap.get(p.key[:4]) if overall else none %}
       <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ{% if cv and not year %} · Datenlage {{ cv.level }}{{ ' – wird noch ergänzt' if cv.growing }}{% endif %}">
         <rect class="hit" x="{{ x - 1 - off }}" y="0" width="{{ step }}" height="{{ h }}"/>
@@ -260,18 +260,20 @@
   }
   initList();
 
-  // Filter wirken sofort (Auswahl/Datum direkt, Suche nach kurzer Tipppause). Die Liste wird im Hintergrund
-  // neu geladen und ausgetauscht – das Suchfeld behält Fokus und Cursor.
+  // Filter wirken sofort (Auswahl/Datum direkt, Suche nach kurzer Tipppause). Die Seite unter dem Formular wird im
+  // Hintergrund neu geladen und ausgetauscht – das Suchfeld behält Fokus und Cursor. Jeder Filterstand ist ein Eintrag
+  // im Verlauf, sodass ESC/Zurück Schritt für Schritt bis zur ungefilterten Übersicht führen.
   var form = document.getElementById('filters');
   if (form) {
     var q = form.querySelector('input[name=q]'), timer = null, last = q ? q.value : '', seq = 0, ctrl = null;
+    var focusKey = null;                               // nach dem Laden diesen Zeitbalken fokussieren
     var urlOf = function () {
       var p = new URLSearchParams();
       new FormData(form).forEach(function (v, k) { if (v) p.append(k, v); });
       var s = p.toString();
       return form.getAttribute('action') + (s ? '?' + s : '');
     };
-    var swap = function (doc) {
+    var swap = function (doc, syncFields) {
       // Gesamtbestand oben bleibt stehen; ausgetauscht wird alles nach dem Filterformular
       var nf = doc.getElementById('filters');
       if (!nf) return false;
@@ -279,15 +281,22 @@
       var tail = [];
       for (var el = nf.nextSibling; el; el = el.nextSibling) tail.push(el);
       tail.forEach(function (el) { form.parentNode.appendChild(document.importNode(el, true)); });
-      // versteckte Felder (Jahr, Auswahlmodus) angleichen
+      // versteckte Felder (Jahr, Auswahlmodus) angleichen, bei Zurück auch die sichtbaren Felder
       form.querySelectorAll('input[type=hidden]').forEach(function (el) { el.remove(); });
       nf.querySelectorAll('input[type=hidden]').forEach(function (el) {
         form.insertBefore(document.importNode(el, true), form.querySelector('select[name=order]'));
       });
+      if (syncFields) {
+        nf.querySelectorAll('input:not([type=hidden]), select').forEach(function (el) {
+          var mine = form.elements[el.name];
+          if (mine && mine !== document.activeElement) mine.value = el.value;
+        });
+        if (q) last = q.value;
+      }
       return true;
     };
-    var go = function () {
-      var url = urlOf(), my = ++seq;
+    var load = function (url, mode) {                  // mode: push | replace | typing | pop
+      var my = ++seq;
       if (ctrl) ctrl.abort();
       ctrl = 'AbortController' in window ? new AbortController() : null;
       form.classList.add('loading');
@@ -297,15 +306,29 @@
       }).then(function (html) {
         if (my !== seq) return;
         var doc = new DOMParser().parseFromString(html, 'text/html');
-        if (!swap(doc)) { location.href = url; return; }
-        history.replaceState(null, '', url);
-        if (q) last = q.value;
+        if (!swap(doc, mode !== 'typing')) { location.href = url; return; }
+        var st = {nnign: 1, typing: mode === 'typing',
+                  entry: mode === 'replace' && !!(history.state && history.state.entry)};
+        if (mode === 'replace' || (mode === 'typing' && history.state && history.state.typing)) history.replaceState(st, '', url);
+        else if (mode !== 'pop') history.pushState(st, '', url);
+        if (q && mode === 'typing') last = q.value;
         initList();
+        if (focusKey !== null) { focusBar(focusKey); focusKey = null; }
       }).catch(function (e) {
         if (e && e.name === 'AbortError') return;
         location.href = url;                           // Notfall: klassisch laden
       }).finally(function () { if (my === seq) form.classList.remove('loading'); });
     };
+    var go = function () { load(urlOf(), 'push'); };
+    var withParams = function (fn) {                   // aktuelle Adresse abwandeln
+      var p = new URLSearchParams(location.search);
+      fn(p);
+      var s = p.toString();
+      return '/' + (s ? '?' + s : '');
+    };
+    if (!history.state) history.replaceState({nnign: 1, typing: false, entry: 1}, '', location.href);
+    window.addEventListener('popstate', function () { load(location.href, 'pop'); });
+
     form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(timer); go(); });
     form.querySelectorAll('select, input[type=date]').forEach(function (el) {
       el.addEventListener('change', go);
@@ -313,9 +336,120 @@
     if (q) {
       q.addEventListener('input', function () {
         clearTimeout(timer);
-        timer = setTimeout(function () { if (q.value.trim() !== last.trim()) go(); }, 400);
+        timer = setTimeout(function () { if (q.value.trim() !== last.trim()) load(urlOf(), 'typing'); }, 400);
       });
+      if (location.hash === '#suche') { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
     }
+
+    // ---------------------------------------------------------------- Zeitbalken: Klick, Pfeiltasten, Zoom
+    var lastDay = function (ym) {
+      var d = new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0));
+      return ym + '-' + String(d.getUTCDate()).padStart(2, '0');
+    };
+    var zoomUrl = function (key) {
+      return withParams(function (p) {
+        p.delete('page');
+        if (key.length === 4) { p.set('year', key); p.delete('date_from'); p.delete('date_to'); }
+        else { p.set('year', key.slice(0, 4)); p.set('date_from', key + '-01'); p.set('date_to', lastDay(key)); }
+      });
+    };
+    var parentUrl = function () {                      // eine Ebene heraus: Monat → Jahr → alle Jahre → ohne Filter
+      var p = new URLSearchParams(location.search), key = null;
+      if (p.get('date_from') || p.get('date_to')) {
+        key = (p.get('date_from') || '').slice(0, 7) || null;
+        p.delete('date_from'); p.delete('date_to');
+      } else if (p.get('year')) { key = p.get('year'); p.delete('year'); }
+      else p = new URLSearchParams();
+      var s = p.toString();
+      return {url: '/' + (s ? '?' + s : ''), key: key};
+    };
+    var bars = function () {                           // Balken der unteren (gefilterten) bzw. einzigen Entwicklung
+      var boxes = document.querySelectorAll('main .chartbox');
+      return boxes.length ? Array.prototype.slice.call(boxes[boxes.length - 1].querySelectorAll('a.bar')) : [];
+    };
+    var showTip = function (a) {
+      var wrap = a.closest('.chart-wrap'), tip = wrap && wrap.querySelector('.tooltip'), g = a.querySelector('.col');
+      document.querySelectorAll('.col.kfocus').forEach(function (x) { x.classList.remove('kfocus'); });
+      if (!tip || !g) return;
+      g.classList.add('kfocus');
+      var r = wrap.getBoundingClientRect(), b = g.getBoundingClientRect();
+      tip.textContent = g.dataset.tip;
+      tip.hidden = false;
+      tip.style.left = Math.max(0, Math.min(b.left - r.left, r.width - tip.offsetWidth - 4)) + 'px';
+      tip.style.top = '4px';
+    };
+    var focusBar = function (key) {
+      var list = bars();
+      if (!list.length) return;
+      var a = list.filter(function (x) { return x.dataset.key === key; })[0];
+      if (!a) {                                        // sonst: letzter Balken mit Themen
+        var filled = list.filter(function (x) { return +x.dataset.n > 0; });
+        a = (key === 'first' ? filled[0] : filled[filled.length - 1]) || list[list.length - 1];
+      }
+      a.focus({preventScroll: false});
+      showTip(a);
+    };
+    var isField = function (el) {
+      return el && (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) || el.isContentEditable);
+    };
+    document.addEventListener('click', function (e) {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      var a = e.target.closest('a.bar, a[data-set]');
+      if (!a || !a.closest('main')) return;
+      e.preventDefault();
+      if (a.classList.contains('bar')) load(zoomUrl(a.dataset.key), 'push');
+      else {
+        var kv = a.dataset.set.split('=');
+        load(withParams(function (p) { p.delete('page'); p.set(kv[0], kv[1]); }), 'push');
+      }
+      var anchor = document.getElementById('gefiltert');
+      if (anchor) anchor.scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
+    document.addEventListener('focusout', function (e) {
+      if (e.target.classList && e.target.classList.contains('bar')) {
+        var g = e.target.querySelector('.col'); if (g) g.classList.remove('kfocus');
+        var tip = e.target.closest('.chart-wrap') && e.target.closest('.chart-wrap').querySelector('.tooltip');
+        if (tip) tip.hidden = true;
+      }
+    });
+
+    // Eine Ebene zurück: zuerst im Verlauf, sonst aus der Adresse ableiten
+    var back = function () {
+      var par = parentUrl();
+      if (!location.search) return false;              // schon ungefilterte Startübersicht
+      focusKey = par.key;
+      if (history.state && history.state.nnign && !history.state.entry) history.back();
+      else load(par.url, 'replace');
+      return true;
+    };
+
+    window.nnignKeys = function (e) {                  // von der globalen Tastensteuerung aufgerufen
+      var act = document.activeElement, onBar = act && act.classList && act.classList.contains('bar');
+      if (e.key === 'Escape') {
+        if (isField(act)) { act.blur(); return true; }
+        return back();
+      }
+      if (isField(act)) return false;
+      if (e.key === '/' && q) { q.focus(); q.select(); return true; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        var list = bars();
+        if (!list.length) return false;
+        var i = list.indexOf(act);
+        if (i < 0) { focusBar(null); return true; }
+        i = Math.max(0, Math.min(list.length - 1, i + (e.key === 'ArrowLeft' ? -1 : 1)));
+        list[i].focus(); showTip(list[i]);
+        return true;
+      }
+      if (onBar && e.key === 'ArrowDown') {
+        var key = act.dataset.key;
+        if (key.length === 7 && new URLSearchParams(location.search).get('date_from')) return true;   // tiefste Ebene
+        focusKey = 'first';
+        load(zoomUrl(key), 'push');
+        return true;
+      }
+      if (onBar && e.key === 'ArrowUp') { back(); return true; }
+      return false;
+    };
   }
 
   // Live-Anzeige laufender Abrufe
