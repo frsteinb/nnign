@@ -26,7 +26,9 @@ was wer wie warum bedeutet bedeuten erster erste ersten zweiten dritten drei vie
 BRANDS = {"audi": "audi", "porsche": "porsche", "skoda": "skoda", "seat": "seat", "cupra": "seat",
           "bentley": "bentley", "lamborghini": "lamborghini", "bugatti": "bugatti", "ducati": "ducati",
           "traton": "traton", "scania": "traton", "navistar": "traton", "cariad": "cariad", "powerco": "powerco",
-          "moia": "moia", "rivian": "rivian"}
+          "moia": "moia", "rivian": "rivian", "xpeng": "xpeng", "xiaopeng": "xpeng", "gotion": "gotion",
+          "saic": "saic", "scout": "scout", "mobileye": "mobileye", "northvolt": "northvolt",
+          "quantumscape": "quantumscape", "jac": "jac", "faw": "faw"}
 
 # Kanonische Begriffe: Stammformen (nach fold+stem), die dasselbe meinen.
 SYNONYMS: dict[str, tuple[str, ...]] = {

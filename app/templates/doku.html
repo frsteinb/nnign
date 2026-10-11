@@ -111,6 +111,9 @@ VW-Übersicht gelten als konzernrelevant, auch wenn ihr Titel den Konzern nicht 
 <ul>
   <li>Konzernbegriffe: {{ cfg('keywords_strong')|join(', ') }}</li>
   <li>Marken ({{ 'aktiv' if cfg('include_brands') else 'nicht aktiv' }}): {{ cfg('keywords_brands')|join(', ') }}</li>
+  <li>Partner und Beteiligungen ({{ 'aktiv' if cfg('include_partners') else 'nicht aktiv' }}): {{ cfg('keywords_partners')|join(', ') }}
+    – Themen, die nur einen Partner betreffen, tragen das Kennzeichen <span class="badge partner">Partner</span> und lassen
+    sich auf der Startseite filtern. Bewertet werden sie aus Sicht des Konzerns als Partner bzw. Anteilseigner.</li>
   <li>Ausschluss: {{ cfg('keywords_exclude')|join(', ') }}</li>
 </ul>
 <p>Mit KI wird die Relevanz zusätzlich vom Modell geprüft; als nicht relevant erkannte Meldungen werden gespeichert

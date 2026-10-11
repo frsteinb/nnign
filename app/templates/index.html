@@ -92,6 +92,11 @@
     <option value="neutral" {{ 'selected' if args.sentiment == 'neutral' }}>neutral</option>
     <option value="negativ" {{ 'selected' if args.sentiment == 'negativ' }}>negativ</option>
   </select>
+  <select name="scope" aria-label="Bereich">
+    <option value="">Konzern und Partner</option>
+    <option value="konzern" {{ 'selected' if args.scope == 'konzern' }}>nur Konzern und Marken</option>
+    <option value="partner" {{ 'selected' if args.scope == 'partner' }}>nur Partner und Beteiligungen</option>
+  </select>
   <select name="source" aria-label="Medium">
     <option value="">alle Medien</option>
     {% for d in domains %}<option value="{{ d.d }}" {{ 'selected' if args.source == d.d }}>{{ d.n }} ({{ d.c }})</option>{% endfor %}

@@ -63,9 +63,11 @@ def bases() -> dict:
         "topics": _h(topics.ALGO_VERSION, config.get("cluster_threshold"), config.get("cluster_window_days"),
                      config.get("cluster_max_span_days")),
         "relevance": _h(config.get("keywords_strong"), config.get("keywords_brands"), config.get("keywords_exclude"),
-                        config.get("include_brands"), config.get("min_summary_hits")),
+                        config.get("include_brands"), config.get("min_summary_hits"), config.get("keywords_partners"),
+                        config.get("include_partners")),
         "search": _h(config.get("search_query"), config.get("search_query_zh"), config.get("search_enabled"),
-                     config.get("backfill_search_window_days")),
+                     config.get("backfill_search_window_days"), config.get("search_query_partners"),
+                     config.get("include_partners")),
         "period": _h(since, until),
         "sources": srcs,
         "llm": llm.fingerprint() if llm.available() else "",
@@ -193,6 +195,9 @@ def check(startup: bool = False) -> list[str]:
     # Relevanzbegriffe -> nicht mehr passende Meldungen und erneutes Durchsuchen vorschlagen
     if cur["relevance"] != old.get("relevance") and not _offered("relevance", cur["relevance"]):
         if has_data:
+            n_scope = rescope()
+            if n_scope:
+                notes.append(f"Relevanzbegriffe geändert – {n_scope} Meldungen neu als Konzern/Partner eingeordnet")
             n = len(_no_longer_relevant())
             if n:
                 _suggest("relevance_cleanup", "Nicht mehr passende Meldungen ausblenden",
@@ -318,6 +323,23 @@ def _no_longer_relevant() -> list[int]:
         if m.score(a["title"], a["summary"] or "") <= 0:
             out.append(a["id"])
     return out
+
+
+def rescope() -> int:
+    """Einordnung Konzern/Partner für alle Meldungen und Themen neu bestimmen (schnell, ohne Abrufe)."""
+    from .relevance import Matcher
+    m = Matcher.from_config()
+    changed = 0
+    with db.tx() as conn:
+        for a in conn.execute("SELECT id, title, summary, title_orig, summary_orig, scope FROM articles WHERE relevant=1"):
+            sc = m.scope(a["title_orig"] or a["title"], a["summary_orig"] or a["summary"] or "")
+            if sc != a["scope"]:
+                conn.execute("UPDATE articles SET scope=? WHERE id=?", (sc, a["id"]))
+                changed += 1
+        if changed:
+            conn.execute("UPDATE topics SET scope=CASE WHEN NOT EXISTS (SELECT 1 FROM articles a WHERE "
+                         "a.topic_id=topics.id AND a.scope!='partner') THEN 'partner' ELSE 'konzern' END")
+    return changed
 
 
 def relevance_cleanup() -> int:

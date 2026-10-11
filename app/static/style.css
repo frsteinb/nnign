@@ -320,3 +320,4 @@ details.setgroup[open] > summary { border-bottom: 1px solid var(--line); margin-
 @media (max-width: 600px) { .savebar { padding-right: 64px; } }
 .pill.done { border-color: var(--ok); color: var(--ok); }
 .tile h3 .pill { margin-left: 6px; font-weight: 400; }
+.badge.partner { background: var(--neu-bg); color: var(--ink-2); border: 1px dashed var(--neu); }

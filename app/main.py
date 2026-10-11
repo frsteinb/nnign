@@ -28,7 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -162,8 +162,11 @@ templates.env.globals["translator_names"] = {"libretranslate": "LibreTranslate",
 # ====================================================================== Abfragen
 
 def topic_filters(q: str = "", sentiment: str = "", year: str = "", source: str = "",
-                  date_from: str = "", date_to: str = "", include_hidden: bool = False):
+                  date_from: str = "", date_to: str = "", include_hidden: bool = False, scope: str = ""):
     where, params = [], []
+    if scope in ("konzern", "partner"):
+        where.append("t.scope=?")
+        params.append(scope)
     if not include_hidden:
         where.append("t.hidden=0")
     if q:
@@ -421,7 +424,7 @@ def activity() -> list[dict]:
 
 def _args(request: Request) -> dict:
     qp = request.query_params
-    return {k: (qp.get(k) or "").strip() for k in ("q", "sentiment", "year", "source", "date_from", "date_to")}
+    return {k: (qp.get(k) or "").strip() for k in ("q", "sentiment", "year", "source", "date_from", "date_to", "scope")}
 
 
 # ====================================================================== Öffentliche Seiten

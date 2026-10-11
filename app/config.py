@@ -47,6 +47,13 @@ DEFAULT_STRONG = [
     r"Dieselskandal",
     r"Abgasskandal",
     r"Dieselgate",
+    # eigene Töchter und Gesellschaften
+    r"Scout Motors",
+    r"Scout (?:Traveler|Terra)",
+    r"Electrify America",
+    r"Elli (?:Mobility|Group|Ladestrom|Ladekarte)",
+    r"Everllence",
+    r"Italdesign",
     # Konzernmanager (Titel nennen oft nur den Namen)
     r"Arno Antlitz",
     r"Antlitz",
@@ -81,6 +88,31 @@ DEFAULT_STRONG = [
     r"上汽大众",
     r"大众中国",
     r"大众安徽",
+]
+
+DEFAULT_PARTNERS = [
+    # Partner und Beteiligungen des Konzerns (eigene Töchter stehen bei den Konzern-Begriffen)
+    r"Gotion\w*",
+    r"国轩高科",
+    r"国轩",
+    r"Rivian\w*",
+    r"Xpeng|XPeng|XPENG|Xiaopeng",
+    r"小鹏",
+    r"SAIC",
+    r"上汽集团",
+    r"FAW",
+    r"中国一汽",
+    r"JAC Motors|JAC Group|Jianghuai",
+    r"江淮汽车",
+    r"Horizon Robotics",
+    r"地平线",
+    r"Carizon",
+    r"Mobileye",
+    r"QuantumScape",
+    r"Northvolt",
+    r"Umicore",
+    r"IONWAY",
+    r"24M Technologies",
 ]
 
 DEFAULT_BRANDS = [
@@ -156,6 +188,9 @@ SETTINGS: list[Setting] = [
     Setting("search_query", "str", "Volkswagen OR VW OR Audi OR Porsche OR Skoda OR Seat OR Cupra OR Traton OR Cariad",
             "Suchanfrage (deutsch/englisch)", "Wird um site:<domain> und Zeitfenster ergänzt; gilt für deutsch- "
             "und englischsprachige Quellen.", "Abruf"),
+    Setting("search_query_partners", "str", "Gotion OR Rivian OR Xpeng OR SAIC OR \"Scout Motors\" OR PowerCo",
+            "Zusätzliche Suchbegriffe für Partner",
+            "Werden der Suchanfrage angehängt, wenn Partner einbezogen sind.", "Abruf"),
     Setting("search_query_zh", "str", "大众汽车 OR 奥迪 OR 保时捷 OR 斯柯达 OR 一汽-大众 OR 上汽大众",
             "Suchanfrage (chinesisch)", "Für Quellen mit Sprache „zh“.", "Abruf"),
     Setting("host_delay_seconds", "float", 1.2, "Pause je Host (Sekunden)",
@@ -172,6 +207,10 @@ SETTINGS: list[Setting] = [
     Setting("keywords_brands", "list", DEFAULT_BRANDS, "Marken-Begriffe (Regex, eine pro Zeile)",
             "Konzernmarken; zählen ebenfalls als Treffer, wenn 'Marken einbeziehen' aktiv ist.", "Relevanz"),
     Setting("include_brands", "bool", True, "Marken einbeziehen", "", "Relevanz"),
+    Setting("keywords_partners", "list", DEFAULT_PARTNERS, "Partner und Beteiligungen (Regex)",
+            "Unternehmen, an denen der Konzern beteiligt ist oder mit denen er eng kooperiert. Solche Themen werden als "
+            "„Partner“ gekennzeichnet und lassen sich auf der Startseite filtern.", "Relevanz"),
+    Setting("include_partners", "bool", True, "Partner und Beteiligungen einbeziehen", "", "Relevanz"),
     Setting("keywords_exclude", "list", DEFAULT_EXCLUDE, "Ausschluss-Begriffe (Regex)",
             "Artikel, deren Titel einen dieser Begriffe enthält, werden verworfen.", "Relevanz"),
     Setting("min_summary_hits", "int", 2, "Min. Treffer im Teaser (ohne Titeltreffer)",

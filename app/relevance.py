@@ -43,13 +43,26 @@ class Matcher:
     include: _Multi | None
     exclude: _Multi | None
     min_summary_hits: int
+    partners: _Multi | None = None     # nur Partner/Beteiligungen (zur Kennzeichnung)
+    own: _Multi | None = None          # Konzern und Marken
 
     @classmethod
     def from_config(cls) -> "Matcher":
-        inc = list(config.get("keywords_strong"))
+        own = list(config.get("keywords_strong"))
         if config.get("include_brands"):
-            inc += list(config.get("keywords_brands"))
-        return cls(_compile(inc), _compile(config.get("keywords_exclude")), int(config.get("min_summary_hits")))
+            own += list(config.get("keywords_brands"))
+        partners = list(config.get("keywords_partners")) if config.get("include_partners") else []
+        return cls(_compile(own + partners), _compile(config.get("keywords_exclude")),
+                   int(config.get("min_summary_hits")), _compile(partners) if partners else None, _compile(own))
+
+    def scope(self, title: str, summary: str) -> str:
+        """„konzern“, wenn Konzern oder Marken vorkommen, sonst „partner“ (nur Partner/Beteiligungen)."""
+        text = f"{title} {summary or ''}"
+        if self.own is not None and self.own.findall(text):
+            return "konzern"
+        if self.partners is not None and self.partners.findall(text):
+            return "partner"
+        return "konzern"
 
     def excluded(self, title: str) -> bool:
         return self.exclude is not None and bool(self.exclude.search(title or ""))

@@ -178,6 +178,8 @@ def query_one(sql: str, params=()):
 
 # Spalten, die nach der ersten Version hinzugekommen sind (für bestehende Datenbanken)
 MIGRATIONS = [
+    ("articles", "scope", "TEXT NOT NULL DEFAULT 'konzern'"),   # konzern | partner (nur Partner/Beteiligung)
+    ("topics", "scope", "TEXT NOT NULL DEFAULT 'konzern'"),
     ("topics", "zs_rated_count", "INTEGER NOT NULL DEFAULT 0"),   # Zero-Shot: Meldungen bei der Bewertung
     ("topics", "zs_fp", "TEXT NOT NULL DEFAULT ''"),              # Zero-Shot: Modell/Hypothese der Bewertung
     ("articles", "llm_state", "TEXT NOT NULL DEFAULT ''"),       # '' | pending (KI fehlte/Limit) | done

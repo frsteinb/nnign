@@ -5,6 +5,7 @@
 <article class="card">
   <div class="meta">
     <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
+    {% if t.scope == 'partner' %}<span class="badge partner">Partner/Beteiligung</span>{% endif %}
     <span>bewertet durch: {{ {'lexikon': 'Regeln', 'llm': 'KI', 'manuell': 'Admin (manuell)', 'lernend': 'lernendes Modell', 'zeroshot': 'Zero-Shot-Modell'}.get(t.sentiment_origin, t.sentiment_origin) }}</span>
     {% if t.hidden %}<span class="badge">ausgeblendet</span>{% endif %}
   </div>

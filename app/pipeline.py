@@ -216,12 +216,12 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                 conn.execute(
                     "INSERT OR IGNORE INTO articles(url, title, title_key, summary, source_name, source_domain, "
                     "published_at, fetched_at, via, relevant, sentiment_score, sentiment_detail, topic_id, "
-                    "lang, title_orig, summary_orig, translated_by, llm_state) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "lang, title_orig, summary_orig, translated_by, llm_state, scope) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (it.url, it.title, tkey, it.summary, it.source_name, it.source_domain, pub, db.utcnow(),
                      it.via, relevant, art_score, json.dumps(art_detail, ensure_ascii=False),
                      topic_id if relevant else None, it.lang, it.title_orig, it.summary_orig, it.translated_by,
-                     llm_state))
+                     llm_state, matcher.scope(it.title_orig or it.title, it.summary_orig or it.summary)))
                 if relevant:
                     idf.add_document(vec.keys())
                     ctx.new_articles += 1
@@ -382,7 +382,11 @@ def reclassify() -> dict:
 # ====================================================================== Scans
 
 def _query_for(src) -> str:
-    return config.get("search_query_zh") if fetcher.src_lang(src) == "zh" else config.get("search_query")
+    if fetcher.src_lang(src) == "zh":
+        return config.get("search_query_zh")
+    q = config.get("search_query")
+    extra = (config.get("search_query_partners") or "").strip()
+    return f"{q} OR {extra}" if extra and config.get("include_partners") else q
 
 
 def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool, source_ids: list[int] | None = None) -> list[Item]:

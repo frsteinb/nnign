@@ -69,3 +69,33 @@ def test_extract_links_and_meta():
 def test_search_url():
     u = fetcher.search_url("Volkswagen OR VW", "spiegel.de", after=date(2000, 1, 1), before=date(2000, 4, 1))
     assert "site%3Aspiegel.de" in u and "after%3A2000-01-01" in u and "hl=de" in u
+
+
+def test_partners_are_relevant_and_marked(env):
+    from app.relevance import Matcher
+    m = Matcher.from_config()
+    for t in ["Gotion baut Batteriefabrik in Göttingen aus", "Xpeng meldet Rekordauslieferungen",
+              "Rivian verschiebt Start des R2", "Scout Motors eröffnet Werk in South Carolina", "小鹏汽车销量增长"]:
+        assert m.score(t, "") > 0, t
+    assert m.scope("Xpeng meldet Rekordauslieferungen", "") == "partner"
+    assert m.scope("VW und Xpeng bauen gemeinsames Modell", "") == "konzern"
+    assert m.scope("Scout Motors eröffnet Werk", "") == "konzern"                # eigene Tochter
+    assert m.score("Boy Scouts feiern Jubiläum", "") == 0
+
+
+def test_partner_scope_in_pipeline_and_filter(env):
+    from datetime import datetime, timezone
+    from fastapi.testclient import TestClient
+    from app import config, db, main, pipeline
+    from app.fetcher import Item
+    config.set("collect_since", "2000-01-01")
+    now = datetime.now(timezone.utc)
+    pipeline.ingest([Item("https://a.de/1", "Xpeng meldet Rekordauslieferungen im September", "", now, "A", "a.de", "rss"),
+                     Item("https://a.de/2", "VW kündigt Sparprogramm an", "", now, "A", "a.de", "rss")],
+                    pipeline.Ctx("t"), allow_llm=False)
+    assert db.query_one("SELECT scope FROM topics WHERE title LIKE 'Xpeng%'")["scope"] == "partner"
+    assert db.query_one("SELECT scope FROM topics WHERE title LIKE 'VW%'")["scope"] == "konzern"
+    assert "Xpeng" in pipeline._query_for({"language": "de"})
+    with TestClient(main.app) as c:
+        assert "Partner</span>" in c.get("/").text
+        assert "Xpeng" in c.get("/?scope=partner").text and "Sparprogramm" not in c.get("/?scope=partner").text

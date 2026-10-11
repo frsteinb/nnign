@@ -213,12 +213,13 @@ def refresh(conn, topic_id: int) -> None:
     t = conn.execute("SELECT * FROM topics WHERE id=?", (topic_id,)).fetchone()
     if t is None:
         return
-    arts = conn.execute("SELECT title, summary, published_at, sentiment_score, sentiment_detail FROM articles "
+    arts = conn.execute("SELECT title, summary, published_at, sentiment_score, sentiment_detail, scope FROM articles "
                         "WHERE topic_id=? ORDER BY published_at", (topic_id,)).fetchall()
     if not arts:
         conn.execute("DELETE FROM topics WHERE id=?", (topic_id,))
         return
     fields = {
+        "scope": "partner" if all(a["scope"] == "partner" for a in arts) else "konzern",
         "article_count": len(arts),
         "first_published_at": arts[0]["published_at"],
         "last_published_at": arts[-1]["published_at"],
