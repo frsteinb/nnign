@@ -28,7 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.10.0"
+VERSION = "1.11.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -152,6 +152,18 @@ templates.env.filters["dt"] = fmt_dt
 templates.env.filters["d"] = lambda v: fmt_dt(v, "%d.%m.%Y")
 templates.env.globals["version"] = VERSION
 templates.env.globals["is_admin"] = lambda request: is_admin(request)
+
+
+def _job_groups(jobs):
+    out: list = []
+    for j in jobs:
+        if not out or out[-1][0] != j["group"]:
+            out.append((j["group"], []))
+        out[-1][1].append(j)
+    return out
+
+
+templates.env.globals["job_groups"] = _job_groups
 templates.env.globals["suggestions"] = lambda: maintenance.suggestions()
 templates.env.globals["symbol"] = {"positiv": "▲", "neutral": "●", "negativ": "▼"}
 templates.env.globals["languages"] = sources.LANGUAGES
@@ -410,7 +422,7 @@ def activity() -> list[dict]:
                         "detail": f"{open_n} Themen werden danach automatisch von der KI bewertet", "pct": None})
         elif open_n and not maintenance._share_ok():
             out.append({"kind": "wait", "title": "KI-Nachbewertung wartet",
-                        "phase": "Anteil des Tageslimits für Nachbewertungen ausgeschöpft – weiter ab Mitternacht (UTC)",
+                        "phase": f"Anteil des Tageslimits für Nachbewertungen ausgeschöpft – weiter ab {llm._local(llm._next_utc_midnight())} Uhr",
                         "detail": f"{open_n} Themen offen", "pct": None})
     zs = maintenance.STATUS.get("zeroshot")
     if zs:
@@ -697,7 +709,9 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
         "current_session": (auth.current_session(request) or {"id": None})["id"],
         "session_days": auth.LIFETIME_DAYS, "session_max": auth.MAX_SESSIONS,
         "engines": engines_info(),
-        "bg": maintenance.background_status(),
+        "jobs": maintenance.jobs(), "states": maintenance.STATES,
+        "source_counts": {r["d"]: r["n"] for r in db.query(
+            "SELECT source_domain d, COUNT(*) n FROM articles WHERE relevant=1 GROUP BY source_domain")},
         "llm_name": llm.describe(), "translate_name": translate.describe(), "zs_name": classify.zs_status(),
     })
 
@@ -770,6 +784,16 @@ async def admin_source_update(sid: int, request: Request, _=Depends(require_admi
         conn.execute("UPDATE sources SET name=?, domain=?, feeds=?, use_search=?, archive_template=?, "
                      "archive_step=?, archive_since=?, link_pattern=?, language=?, enabled=? WHERE id=?", (*vals, sid))
     return back("Quelle gespeichert", "quellen")
+
+
+@app.post("/admin/sources/{sid}/toggle")
+def admin_source_toggle(sid: int, _=Depends(require_admin)):
+    row = db.query_one("SELECT name, enabled FROM sources WHERE id=?", (sid,))
+    if row is None:
+        raise HTTPException(404, "Quelle nicht gefunden")
+    with db.tx() as conn:
+        conn.execute("UPDATE sources SET enabled=? WHERE id=?", (0 if row["enabled"] else 1, sid))
+    return back(f"„{row['name']}“ {'deaktiviert' if row['enabled'] else 'aktiviert – wird automatisch nachgeholt'}")
 
 
 @app.post("/admin/sources/{sid}/delete")
@@ -869,11 +893,10 @@ def admin_reclassify(_=Depends(require_admin)):
 @app.get("/fragment/admin-status", response_class=HTMLResponse)
 def fragment_admin_status(request: Request, _=Depends(require_admin)):
     """Live-Teil des Admin-Status (Abruf, Historie, Hintergrundarbeiten)."""
-    bg = maintenance.background_status()
-    resp = templates.TemplateResponse(request, "_admin_status.html", {"status": status_info(), "bg": bg,
-                                                                      "backfill_enabled": config.get("backfill_enabled")})
-    st = pipeline.STATUS
-    busy = any(r["state"] in ("run", "wait") for r in bg) or bool(st["scan"] or st["backfill"])
+    jobs = maintenance.jobs()
+    resp = templates.TemplateResponse(request, "_admin_status.html", {"status": status_info(), "jobs": jobs,
+                                                                      "states": maintenance.STATES})
+    busy = any(j["state"] in ("run", "queued") for j in jobs)
     resp.headers["X-Busy"] = "1" if busy else "0"
     return resp
 

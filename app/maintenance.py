@@ -4,7 +4,7 @@ Grundlagen sind Einstellungen, Regeln, Quellen, Zeitraum, Übersetzer und KI-Anb
 eine davon (im Admin-Bereich, per Umgebungsvariable oder mit einem neuen Image), passiert Folgendes:
 
 - Günstiges geschieht automatisch: Bewertungen neu berechnen, nachübersetzen, neue/geänderte Quellen
-  nachholen, Zeitraum abgleichen, Themen neu bündeln (wenn es voraussichtlich nur kurz dauert), KI-
+  nachholen, Zeitraum abgleichen, Themenbildung neu durchlaufen (wenn es voraussichtlich nur kurz dauert), KI-
   Nachbewertung von Meldungen, bei denen die KI ausgefallen war, und von stark gewachsenen Themen.
 - Aufwendiges wird dem Admin oben als Vorschlag mit Aufwandsschätzung angeboten: großes Neu-Bündeln,
   Historie mit neuen Suchbegriffen neu durchsuchen, nicht mehr passende Meldungen ausblenden, ältere
@@ -159,7 +159,7 @@ def decide_regroup(note: str) -> str | None:
     if secs <= AUTO_REGROUP_SECONDS:
         config.state_set("pending_regroup", True)
         return note + " – Themen werden neu gebündelt"
-    _suggest("regroup", "Themen neu bündeln",
+    _suggest("regroup", "Themenbildung neu durchlaufen",
              f"{note}. Neu bündeln ordnet die {n_articles} Meldungen automatisch gebildeter Themen neu zu (von Hand "
              "gebündelte, gesperrte und KI-Themen bleiben).", f"{_dur(secs)} Rechenzeit, keine Abrufe",
              "topics", bases()["topics"])
@@ -577,81 +577,277 @@ def _pct(done, total):
     return round(100 * done / total) if total else None
 
 
-def background_status() -> list[dict]:
-    """Stand aller Hintergrundarbeiten (Nachjustierung, Neuberechnung, Nachbewertung …) für den Admin-Status."""
+# ---------------------------------------------------------------------------------- Arbeiten-Übersicht
+
+STATES = {   # Zustand -> (Anzeige, Bedeutung)
+    "run": ("läuft", "arbeitet gerade"),
+    "ok": ("fertig", "alles erledigt – wartet auf Neues"),
+    "queued": ("geplant", "startet von selbst in Kürze"),
+    "limit": ("pausiert", "Limit des Anbieters erreicht – macht danach selbst weiter"),
+    "paused": ("angehalten", "vom Admin angehalten"),
+    "confirm": ("wartet auf Bestätigung", "aufwendig – oben unter „Vorschläge“ bestätigen"),
+    "problem": ("Problem", "funktioniert gerade nicht – siehe Details"),
+    "setup": ("nicht eingerichtet", "optional – siehe Details"),
+    "inactive": ("nicht aktiv", "anderes Verfahren gewählt"),
+    "learning": ("sammelt Beispiele", "wird aktiv, sobald genug Beispiele da sind"),
+}
+
+
+def _ago(iso: str | None) -> str:
+    if not iso:
+        return "–"
+    try:
+        secs = (_now() - datetime.fromisoformat(iso)).total_seconds()
+    except ValueError:
+        return "–"
+    if secs < 90:
+        return "gerade eben"
+    if secs < 5400:
+        return f"vor {round(secs / 60)} Min."
+    if secs < 172800:
+        return f"vor {secs / 3600:.0f} Std."
+    return f"vor {secs / 86400:.0f} Tagen"
+
+
+def _hhmm(ts: float) -> str:
+    from zoneinfo import ZoneInfo
+    try:
+        tz = ZoneInfo(config.get("timezone"))
+    except Exception:
+        tz = timezone.utc
+    return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
+
+
+def _queued_note() -> str:
     from . import pipeline
-    rows = []
+    if pipeline.STATUS.get("scan"):
+        return "startet nach dem laufenden Abruf"
+    return "startet in Kürze (die Hintergrundsteuerung prüft alle 30 Sekunden)"
+
+
+def jobs() -> list[dict]:
+    """Alle Arbeiten mit Zustand, letzter Ausführung, Zahlen, Details und Aktionen – für den Admin-Status."""
+    from . import pipeline
     st = pipeline.STATUS
+    out: list[dict] = []
 
+    def add(group, key, name, state, last, numbers, details, actions=(), pct=None):
+        label, meaning = STATES[state]
+        out.append({"group": group, "key": key, "name": name, "state": state, "state_label": label,
+                    "state_meaning": meaning, "last": last, "numbers": numbers, "details": details,
+                    "actions": list(actions), "pct": pct})
+
+    # ------------------------------------------------ Abruf
+    run = db.query_one("SELECT * FROM runs WHERE kind IN ('regulär','manuell','initial','nachholen') ORDER BY id DESC LIMIT 1")
+    srcs = db.query("SELECT name, last_status FROM sources WHERE enabled=1")
+    bad = [r["name"] for r in srcs if r["last_status"] and r["last_status"] != "ok"]
+    numbers = (f"letzter Lauf: {run['fetched']} abgerufen, {run['new_articles']} neu gespeichert, {run['new_topics']} neue "
+               "Themen") if run else "–"
+    if st.get("scan"):
+        sc = st["scan"]
+        state, details = "run", f"{sc.get('kind', '')}: {sc.get('phase', '')}"
+        if sc.get("sources_total"):
+            details += f" ({sc.get('sources_done', 0)} von {sc['sources_total']} Quellen)"
+    elif not config.state_get("initial_done"):
+        state = "problem" if run and run["status"] == "fehler" else "queued"
+        details = ("Keine Quelle erreichbar – Netzwerk/Proxy prüfen; neuer Versuch alle 10 Minuten." if state == "problem"
+                   else "Initial-Scan " + _queued_note())
+    elif run and run["status"] == "fehler":
+        state, details = "problem", (run["log"] or "").strip().splitlines()[-1][:200] if run["log"] else "Lauf fehlgeschlagen"
+    elif srcs and len(bad) > len(srcs) / 2:
+        state, details = "problem", f"{len(bad)} von {len(srcs)} Quellen liefern Fehler – siehe „Quellen“"
+    else:
+        nxt = pipeline.next_scan_time()
+        state = "ok"
+        details = (f"nächster Abruf um {_hhmm(nxt.timestamp())} (alle {config.get('scan_interval_hours'):g} Std.)")
+        if bad:
+            details += f" · {len(bad)} Quelle(n) mit Fehlern: {', '.join(bad[:3])}{' …' if len(bad) > 3 else ''}"
+    add("Abruf", "scan", "Aktuelle Meldungen (Feeds und Suche)", state, _ago(run["started_at"] if run else None),
+        numbers, details, [("Jetzt abrufen", "/admin/scan", "")])
+
+    bf = pipeline.backfill_progress()
+    last_bf = (db.query_one("SELECT MAX(done_at) t FROM backfill_tasks") or {"t": None})["t"]
+    nums = f"{bf['done']} von {bf['total']} Abrufen erledigt" + (f", {bf['failed']} fehlgeschlagen" if bf["failed"] else "")
+    actions = []
+    if bf["state"] == "fertig":
+        state, details = "ok", ("Erfassungszeitraum vollständig abgerufen. Wird er erweitert oder eine Quelle ergänzt, "
+                                "plant nnign neue Abrufe automatisch ein.")
+    elif bf["state"] == "leer":
+        state, details = "ok", "nichts einzuplanen"
+    elif bf["state"] == "angehalten":
+        state, details = "paused", f"noch {bf['open']} Abrufe offen"
+        actions.append(("Fortsetzen", "/admin/backfill/toggle", ""))
+    else:
+        state = "run" if bf["state"] == "aktiv" else "queued"
+        details = bf["state_text"] if state == "run" else f"noch {bf['open']} Abrufe offen – nächster Durchgang in Kürze"
+        sess = st.get("backfill_session") or {}
+        if sess.get("tasks") and time.time() - sess.get("started", time.time()) > 60:
+            rate = sess["tasks"] / (time.time() - sess["started"])
+            details += f" · noch etwa {_dur(bf['open'] / rate).replace('etwa ', '')}"
+        actions.append(("Anhalten", "/admin/backfill/toggle", "secondary"))
+    if bf["failed"]:
+        actions.append((f"{bf['failed']} fehlgeschlagene wiederholen", "/admin/backfill/reset", "secondary"))
+    add("Abruf", "backfill", "Historie (Archive, Suche, Internet Archive)", state, _ago(last_bf), nums, details, actions,
+        pct=bf["percent"] if state in ("run", "queued", "paused") else None)
+
+    catch = config.state_get("pending_catchup") or []
+    if catch:
+        add("Abruf", "catchup", "Neue/geänderte Quellen nachholen", "run" if (st.get("scan") or {}).get("kind") == "nachholen"
+            else "queued", "–", f"{len(catch)} Quelle(n)", "aktueller Zeitraum wird für diese Quellen nachgeholt – "
+            + _queued_note())
+    hub_n = db.query_one("SELECT COUNT(*) n, SUM(links) l, MAX(last_fetch) t FROM hub_pages")
+    hubs_q = config.state_get("pending_hubs") or []
+    add("Abruf", "hubs", "Übersichtsseiten auflösen", "queued" if hubs_q else "ok", _ago(hub_n["t"]),
+        f"{hub_n['n'] or 0} Übersichtsseiten, {hub_n['l'] or 0} Artikel-Links",
+        (f"{len(hubs_q)} warten – " + _queued_note()) if hubs_q else
+        "Übersichtsseiten werden beim Abruf erkannt und höchstens alle 12 Std. neu geladen")
+
+    # ------------------------------------------------ Aufbereitung
+    n_tr = db.query_one("SELECT COUNT(*) n, SUM(translated_by!='') done FROM articles WHERE lang!='de' AND relevant=1")
+    open_tr = (n_tr["n"] or 0) - (n_tr["done"] or 0)
+    prov = translate.provider()
+    nums = f"{n_tr['done'] or 0} übersetzt, {open_tr} offen"
+    if not prov:
+        state = "setup" if config.get("translate_provider") != "none" else "inactive"
+        details = ("Kein Übersetzer – fremdsprachige Meldungen bleiben im Original. Kostenlos: LibreTranslate-Container "
+                   "(COMPOSE_PROFILES=uebersetzung) oder DEEPL_API_KEY in .env.") if state == "setup" else "abgeschaltet"
+    elif translate.paused_reason():
+        state, details = "limit", translate.paused_reason()
+    elif st.get("translate"):
+        state, details = "run", f"{st['translate']['n']} Meldungen"
+    elif open_tr and (translate.last_problem.recent() or llm.last_problem.recent()):
+        state, details = "problem", translate.last_problem.recent() or llm.last_problem.recent()
+    elif open_tr:
+        state, details = "queued", f"{open_tr} Meldungen – " + _queued_note()
+    else:
+        state, details = "ok", f"{translate.NAMES[prov]} · neue Meldungen werden beim Abruf übersetzt"
+    add("Aufbereitung", "translate", "Übersetzung ins Deutsche", state, _ago(config.state_get("translate_last")), nums,
+        details, [("Testen", "/admin/translate-test", "")] + ([("Jetzt nachübersetzen", "/admin/translate-pending",
+                                                                "secondary")] if open_tr and prov else []))
+
+    t = db.query_one("SELECT COUNT(*) n, SUM(article_count) a, SUM(manual_group) m FROM topics WHERE hidden=0")
     rg, last = st.get("regroup"), config.state_get("last_regroup")
-    row = {"name": "Themen-Bündelung", "state": "idle", "pct": None,
-           "text": (f"zuletzt {last['at'][:16].replace('T', ' ')}: {last['articles']} Meldungen, "
-                    f"{last['before']} → {last['after']} Themen") if last else "noch nicht neu gebündelt"}
+    nums = f"{t['n'] or 0} Themen aus {t['a'] or 0} Meldungen" + (f", {t['m']} von Hand gebündelt" if t["m"] else "")
     if rg:
-        row.update(state="run", pct=_pct(rg.get("done", 0), rg.get("total", 0)),
-                   text=f"läuft: {rg.get('done', 0)} von {rg.get('total', 0)} Meldungen neu zugeordnet")
+        state, details = "run", f"{rg.get('done', 0)} von {rg.get('total', 0)} Meldungen neu zugeordnet"
     elif config.state_get("pending_regroup"):
-        row.update(state="wait", text="steht an – startet in Kürze")
+        state, details = "queued", "Themenbildung wird neu durchlaufen – " + _queued_note()
     elif any(x["id"] == "regroup" for x in suggestions()):
-        row.update(state="offer", text="als Vorschlag oben – wartet auf Bestätigung")
-    rows.append(row)
+        state, details = "confirm", "Grundlagen haben sich geändert; Neu-Durchlauf ist aufwendig"
+    else:
+        state = "ok"
+        details = (f"neue Meldungen werden beim Abruf sofort zugeordnet (Schwelle {config.get('cluster_threshold')})"
+                   + (f" · letzter Neu-Durchlauf: {last['before']} → {last['after']} Themen" if last else ""))
+    add("Aufbereitung", "topics", "Themenbildung (automatisch)", state,
+        _ago(last["at"]) if last else "–", nums, details,
+        [("Neu durchlaufen", "/admin/regroup", "secondary"), ("Von Hand zusammenführen …", "/?auswahl=1", "link")],
+        pct=_pct(rg.get("done", 0), rg.get("total", 0)) if rg else None)
 
+    # ------------------------------------------------ Bewertung
+    counts = {r["o"]: r["n"] for r in db.query("SELECT sentiment_origin o, COUNT(*) n FROM topics WHERE hidden=0 "
+                                                 "GROUP BY sentiment_origin")}
     rc, last = st.get("reclassify"), config.state_get("last_reclassify")
-    row = {"name": "Neuberechnung der Bewertungen", "state": "idle", "pct": None,
-           "text": (f"zuletzt {last['at'][:16].replace('T', ' ')}: {last['articles']} Meldungen, {last['topics']} Themen")
-           if last else "noch nicht neu berechnet"}
     if rc:
-        row.update(state="run", pct=_pct(rc.get("done", 0), rc.get("total", 0)),
-                   text=f"läuft: {rc.get('phase', '')} {rc.get('done', 0)} von {rc.get('total', 0)}")
+        state, details = "run", f"{rc.get('phase', '')}: {rc.get('done', 0)} von {rc.get('total', 0)}"
     elif config.state_get("pending_reclassify"):
-        row.update(state="wait", text="steht an – startet in Kürze")
-    rows.append(row)
+        state, details = "queued", "Bewertungen werden neu berechnet – " + _queued_note()
+    else:
+        state, details = "ok", "immer aktiv; Rückfall, wenn kein anderes Verfahren entscheidet"
+    add("Bewertung", "rules", "Bewertung nach Regeln", state, _ago(last["at"]) if last else "–",
+        f"{counts.get('lexikon', 0)} Themen", details, [("Neu berechnen", "/admin/reclassify", "secondary")],
+        pct=_pct(rc.get("done", 0), rc.get("total", 0)) if rc else None)
+
+    info = classify.learned_info()
+    need = int(config.get("learned_min_examples"))
+    acc = f"{info['accuracy'] * 100:.0f} %" if info["accuracy"] is not None else "–"
+    nums = f"{info['n']} Beispiele, Genauigkeit {acc}, {counts.get('lernend', 0)} Themen"
+    if not classify.allowed("lernend"):
+        state, details = "inactive", f"Bewertungsverfahren ist „{classify.engine()}“"
+    elif classify.learned_ready():
+        state, details = "ok", "ordnet regelbasierte Themen ein, wenn es sicher genug ist; trainiert stündlich nach"
+    elif info["n"] < need:
+        state, details = "learning", (f"{info['n']} von {need} Beispielen – lernt aus Bewertungen des Admins und sicheren "
+                                      "KI-Bewertungen")
+    else:
+        state, details = "learning", (f"Genauigkeit {acc} unter der Mindestgenauigkeit "
+                                      f"{float(config.get('learned_min_accuracy')) * 100:.0f} % – braucht mehr/klarere Beispiele")
+    add("Bewertung", "learned", "Lernendes Modell", state, _ago(info.get("trained_at")), nums, details,
+        [("Jetzt trainieren", "/admin/learned-train", "secondary")])
+
+    zs_open = zeroshot_open()
+    calls = classify._zs_calls_today()
+    nums = (f"{counts.get('zeroshot', 0)} Themen, {zs_open} offen · heute {calls} von "
+            f"{config.get('zeroshot_max_calls_per_day')} Aufrufen")
+    if not classify.zs_configured():
+        state, details = "setup", "optional, kostenlos: HF_TOKEN in .env (huggingface.co/settings/tokens)"
+    elif not zeroshot_active():
+        state = "inactive"
+        details = ("springt ein, solange die KI pausiert" if classify.engine() == "auto" else
+                   f"Bewertungsverfahren ist „{classify.engine()}“")
+    elif classify._zs_pause["until"] > time.time():
+        state = "problem" if any(w in classify._zs_pause["reason"] for w in ("ungültig", "nicht verfügbar")) else "limit"
+        details = f"{classify._zs_pause['reason']} – weiter ab {_hhmm(classify._zs_pause['until'])}"
+    elif calls >= int(config.get("zeroshot_max_calls_per_day")):
+        state, details = "limit", f"Tageslimit erreicht – weiter ab {_hhmm(llm._next_utc_midnight())} Uhr"
+    elif STATUS.get("zeroshot"):
+        state, details = "run", f"„{STATUS['zeroshot']['title']}“"
+    elif zs_open:
+        state, details = "queued", f"{zs_open} Themen – " + _queued_note()
+    else:
+        state, details = "ok", f"{config.get('zeroshot_model')} · bewertet neue Themen im Hintergrund"
+    if classify._zs_pause.get("error") and state in ("queued", "ok"):
+        state, details = "problem", classify._zs_pause["error"]
+    add("Bewertung", "zeroshot", "Entscheidungsmodell (Zero-Shot)", state, _ago(config.state_get("zs_last")), nums,
+        details, [("Testen", "/admin/zeroshot-test", "")])
+
+    limit = int(config.get("llm_max_calls_per_day"))
+    nums = f"{counts.get('llm', 0)} Themen · heute {llm.calls_today()} von {limit} Aufrufen"
+    if not llm.available():
+        state = "setup"
+        details = ("optional; kostenlos z. B. mit Gemini oder Groq: Anbieter und Modell unter Einstellungen → KI, "
+                   "Key in .env") + (f" ({llm.missing()})" if config.get("llm_enabled") else " (KI-Analyse ist abgeschaltet)")
+    elif not llm.ready():
+        state, details = "limit", llm.blocked_reason()
+        if "Key" in details or "verweigert" in details:
+            state = "problem"
+    elif llm.last_problem.recent(1):
+        state, details = "problem", llm.last_problem.recent(1)
+    else:
+        state, details = "ok", llm.describe().replace("aktiv: ", "")
+    add("Bewertung", "llm", "KI (Sprachmodell) für neue Meldungen", state, _ago(config.state_get("llm_last_ok")), nums,
+        details, [("Verbindung testen", "/admin/llm-test", ""), ("Verfügbare Modelle", "/admin/llm-models", "secondary")])
 
     if llm.available() and classify.allowed("llm"):
         kinds = {"pending": "nach Ausfall/Limit", "grown": "stark gewachsen", "recent": "letzte 30 Tage",
-                 "old": "ältere (freigegeben)", "fp": "neues Modell/Prompt"}
-        counts = {k: _rerate_count(k) for k in rerate_kinds()}
-        open_n = sum(counts.values())
-        limit = int(config.get("llm_max_calls_per_day"))
+                 "old": "ältere", "fp": "neues Modell/Prompt"}
+        cnt = {k: _rerate_count(k) for k in rerate_kinds()}
+        open_n = sum(cnt.values())
         share = int(limit * float(config.get("llm_rerate_share")))
-        parts = [f"{n} {kinds[k]}" for k, n in counts.items() if n]
-        text = (f"{open_n} Themen offen ({', '.join(parts)})" if open_n else "nichts offen") +                f" · heute {llm.calls_today()} von {limit} KI-Aufrufen, Nachbewertung bis {share}"
-        state = "idle" if not open_n else "wait"
+        nums = (f"{open_n} offen" + (" (" + ", ".join(f"{n} {kinds[k]}" for k, n in cnt.items() if n) + ")" if open_n else "")
+                + f" · Anteil am Tageslimit bis {share} Aufrufe")
+        last_r = (db.query_one("SELECT MAX(llm_rated_at) t FROM topics") or {"t": None})["t"]
         if STATUS.get("rerate"):
-            state, text = "run", f"läuft: „{STATUS['rerate']['title']}“ · " + text
-        elif open_n and llm.blocked_reason():
-            text += f" · {llm.blocked_reason()}"
-        elif open_n and not _share_ok():
-            text += " · Anteil für heute ausgeschöpft, weiter ab Mitternacht (UTC)"
-        if config.state_get("llm_rerate_old") is None and _rerate_count("old"):
-            text += f" · {_rerate_count('old')} ältere Themen nicht freigegeben"
-        rows.append({"name": "KI-Nachbewertung", "state": state, "pct": None, "text": text})
+            state, details = "run", f"„{STATUS['rerate']['title']}“"
+        elif not open_n:
+            state, details = "ok", "nichts offen – Themen werden nachbewertet, wenn die KI ausfiel oder sie stark wachsen"
+        elif not llm.ready():
+            state, details = "limit", llm.blocked_reason()
+        elif not _share_ok():
+            state, details = "limit", f"Anteil für Nachbewertungen heute ausgeschöpft – weiter ab {_hhmm(llm._next_utc_midnight())} Uhr"
+        else:
+            state, details = "queued", f"{open_n} Themen – startet in Kürze (alle 2 Minuten ein Durchgang)"
+        old_n = _rerate_count("old") if not config.state_get("llm_rerate_old") else 0
+        if old_n:
+            details += f" · {old_n} ältere Themen nur nach Bestätigung (Vorschläge)"
+        add("Bewertung", "rerate", "KI-Nachbewertung", state, _ago(last_r), nums, details)
 
-    if classify.zs_configured():
-        n = zeroshot_open()
-        state = "run" if STATUS.get("zeroshot") else ("wait" if n else "idle")
-        text = (f"{n} Themen offen · " if n else "nichts offen · ") + classify.zs_status()
-        if not zeroshot_active():
-            text = "nicht aktiv (anderes Bewertungsverfahren gewählt bzw. KI vorhanden) · " + classify.zs_status()
-            state = "idle"
-        rows.append({"name": "Zero-Shot-Bewertung", "state": state, "pct": None, "text": text})
-
-    rows.append({"name": "Lernendes Modell", "state": "idle", "pct": None, "text": classify.learned_status()})
-
-    n_tr = db.query_one("SELECT COUNT(*) n FROM articles WHERE lang!='de' AND translated_by='' AND relevant=1")["n"]
-    if n_tr or st.get("translate"):
-        rows.append({"name": "Nachübersetzung", "state": "run" if st.get("translate") else (
-            "wait" if translate.provider() else "idle"), "pct": None,
-            "text": f"{n_tr} Meldungen unübersetzt · {translate.describe()}"})
-    hubs_q = config.state_get("pending_hubs") or []
-    catch = config.state_get("pending_catchup") or []
-    if hubs_q:
-        rows.append({"name": "Übersichtsseiten", "state": "wait", "pct": None,
-                     "text": f"{len(hubs_q)} werden aufgelöst"})
-    if catch:
-        rows.append({"name": "Neue Quellen", "state": "wait", "pct": None,
-                     "text": f"{len(catch)} Quelle(n) werden nachgeholt"})
-    return rows
+    # ------------------------------------------------ Pflege
+    sugs = suggestions()
+    add("Pflege", "check", "Selbstpflege (Änderungen erkennen)", "confirm" if sugs else "ok",
+        _ago(STATUS.get("last_check")), f"{len(sugs)} Vorschläge offen" if sugs else "keine Vorschläge offen",
+        ("Vorschläge oben bestätigen oder ablehnen" if sugs else
+         "prüft jede Minute Einstellungen, Regeln, Quellen und Dienste und zieht den Bestand nach"))
+    return out
 
 
 # ---------------------------------------------------------------------------------- Arbeit

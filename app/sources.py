@@ -122,7 +122,7 @@ def seed_sources() -> dict:
 
 
 def all_sources(enabled_only: bool = False):
-    sql = "SELECT * FROM sources" + (" WHERE enabled=1" if enabled_only else "") + " ORDER BY name"
+    sql = "SELECT * FROM sources" + (" WHERE enabled=1" if enabled_only else "") + " ORDER BY name COLLATE NOCASE"
     return db.query(sql)
 
 

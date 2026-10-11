@@ -159,9 +159,9 @@ gebündelt.</p>
   <li><strong>Quellen</strong>: je Medium die früheste Meldung, höchstens {{ cfg('max_sources_per_topic') }}.</li>
 </ul>
 <p>Falsch zusammengefasste Themen lassen sich auf der Themenseite trennen („abtrennen“). Zusammengehörige Themen führt
-der Admin auf der Startseite zusammen: „Themen zusammenführen“ (unter dem Filter) schaltet den Auswahlmodus ein, dann
+der Admin auf der Startseite zusammen: „Themen von Hand zusammenführen“ (unter dem Filter) schaltet den Auswahlmodus ein, dann
 zwei oder mehr Themen ankreuzen und „Zusammenführen“ wählen, optional mit neuem Titel. Ziel ist das älteste Thema; es
-gilt danach als von Hand gebündelt und wird auch beim automatischen Neu-Bündeln nicht wieder getrennt. „Themen neu bündeln“ im Admin-Bereich ordnet alle automatisch gebildeten Themen mit dem aktuellen
+gilt danach als von Hand gebündelt und wird auch beim automatischen Neu-Bündeln nicht wieder getrennt. „Themenbildung neu durchlaufen“ im Admin-Bereich ordnet alle automatisch gebildeten Themen mit dem aktuellen
 Verfahren und der aktuellen Schwelle neu; von Hand bearbeitete, gesperrte und KI-Themen bleiben erhalten. Nach einem
 Update mit verbessertem Verfahren geschieht das beim Neustart automatisch.</p>
 
@@ -493,7 +493,9 @@ Skripte können weiterhin HTTP-Basic-Auth verwenden.</p>
   <tr><td>Neu initialisieren</td><td>löscht alle erfassten Daten und startet einen neuen Initial-Scan; wahlweise mit
     Werkseinstellungen (Standard-Zeitraum vier Wochen, Standard-Quellen; das Admin-Passwort bleibt). Bestätigung durch Eintippen von LÖSCHEN.</td></tr>
   <tr><td>Bewertungen neu berechnen</td><td>wendet geänderte Bewertungsregeln auf den Bestand an.</td></tr>
-  <tr><td>Themen neu bündeln</td><td>ordnet alle Meldungen automatisch gebildeter Themen neu zu (z. B. nach
+  <tr><td>Themen von Hand zusammenführen</td><td>Startseite → „Themen von Hand zusammenführen“: Themen ankreuzen, die
+    dieselbe Geschichte betreffen, und zu einem zusammenlegen. Die Auswahl trifft der Admin; das Ergebnis bleibt erhalten.</td></tr>
+  <tr><td>Themenbildung neu durchlaufen</td><td>automatisch: nnign ordnet alle Meldungen automatisch gebildeter Themen mit dem aktuellen Verfahren neu zu (z. B. nach
     geänderter Ähnlichkeitsschwelle); manuelle, gesperrte und KI-Themen bleiben.</td></tr>
   <tr><td>Übersetzung testen / Jetzt nachübersetzen</td><td>prüft den eingerichteten Übersetzer bzw. übersetzt noch
     nicht übersetzte fremdsprachige Meldungen sofort.</td></tr>

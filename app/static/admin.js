@@ -126,6 +126,11 @@
   document.addEventListener('click', function (e) {
     var a = e.target.closest('[data-open-group]');
     if (a) { e.preventDefault(); openGroup(a.dataset.openGroup); }
+    var row = e.target.closest('[data-toggle-row]');
+    if (row) {
+      var r = document.getElementById(row.dataset.toggleRow);
+      if (r) { r.hidden = !r.hidden; row.textContent = r.hidden ? 'Bearbeiten' : 'Schließen'; }
+    }
     var t = e.target.closest('[data-groups]');
     if (t) { groups.forEach(function (g) { g.open = t.dataset.groups === 'open'; }); rememberGroups(); }
   });

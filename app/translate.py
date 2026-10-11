@@ -160,7 +160,15 @@ def translate_texts(texts: list[str], lang: str) -> tuple[list[str] | None, str]
     if not p or not texts or paused_reason():
         return None, ""
     out = {"libretranslate": _libretranslate, "deepl": _deepl, "llm": llm.translate}[p](texts, lang)
+    if out is not None:
+        last_problem.msg = ""
+        config.state_set("translate_last", _now_iso())
     return out, (p if out is not None else "")
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def translate_items(items: list, batch: int = 40, allow_llm: bool = True) -> int:

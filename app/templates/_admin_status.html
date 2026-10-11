@@ -1,46 +1,26 @@
 {% set st = status %}
-<div class="tiles">
-  <div class="tile">
-    <h3>Abruf</h3>
-    {% if st.scan_running %}<p><span class="spinner inline"></span> <strong>{{ st.scan_running.kind }}</strong>: {{ st.scan_running.phase }}</p>
-    {% elif not st.initial_done %}<p><span class="spinner inline"></span> Initial-Scan steht an</p>
-    {% else %}<p>Letzter Scan {{ st.last_scan_at|dt if st.last_scan_at else '–' }}<br>nächster {{ st.next_scan_at|dt }}</p>{% endif %}
-    <div class="actions"><form method="post" action="/admin/scan"><button>Jetzt aktualisieren</button></form></div>
-  </div>
-  <div class="tile">
-    {% set bf = st.backfill %}
-    <h3>Historie-Abruf {% if bf.state == 'fertig' %}<span class="pill done">abgeschlossen</span>{% elif bf.state == 'angehalten' %}<span class="pill offer">angehalten</span>{% elif bf.state in ('aktiv', 'wartet') %}<span class="pill wait">aktiv</span>{% endif %}</h3>
-    <div class="bar"><span style="width: {{ bf.percent }}%"></span></div>
-    {% if bf.state == 'leer' %}<p>Noch keine Abrufe eingeplant.</p>
-    {% elif bf.state == 'fertig' %}<p>Alle {{ bf.total }} Abrufe des Erfassungszeitraums erledigt
-      ({{ bf.ok }} erfolgreich{% if bf.failed %}, {{ bf.failed }} fehlgeschlagen{% endif %}{% if bf.skipped %}, {{ bf.skipped }} übersprungen{% endif %}).
-      <span class="muted small">Wird der Zeitraum erweitert oder eine Quelle ergänzt, plant nnign neue Abrufe automatisch ein.</span></p>
-    {% else %}<p>{{ ('%g'|format(bf.percent)).replace('.', ',') }} % · noch {{ bf.open }} von {{ bf.total }} Abrufen offen<br>
-      {% if bf.state == 'aktiv' %}<span class="spinner inline"></span>{% endif %}{{ bf.state_text }}</p>{% endif %}
-    <div class="actions">
-      {% if bf.state != 'fertig' and bf.state != 'leer' %}<form method="post" action="/admin/backfill/toggle"><button class="secondary">{{ 'Anhalten' if backfill_enabled else 'Fortsetzen' }}</button></form>{% endif %}
-      {% if bf.failed %}<form method="post" action="/admin/backfill/reset"><button class="secondary">{{ bf.failed }} fehlgeschlagene wiederholen</button></form>{% endif %}
-    </div>
-  </div>
-  <div class="tile">
-    <h3>Datenbestand</h3>
-    <p><strong>{{ st.topics }}</strong> Themen · <strong>{{ st.articles }}</strong> Meldungen<br>
-      <span class="dot pos"></span>{{ st.positive }} <span class="dot neu"></span>{{ st.neutral }} <span class="dot neg"></span>{{ st.negative }}</p>
-    <div class="actions"><a class="button secondary" href="/?auswahl=1">Themen zusammenführen</a></div>
-  </div>
-</div>
-
-<h3 class="sub">Hintergrundarbeiten</h3>
-<table class="list bg">
-  <tbody>{% for r in bg %}
-    <tr class="st-{{ r.state }}">
-      <td class="bg-name">{% if r.state == 'run' %}<span class="spinner inline"></span>{% elif r.state == 'wait' %}<span class="pill wait">steht an</span>{% elif r.state == 'offer' %}<span class="pill offer">Vorschlag</span>{% else %}<span class="pill idle">bereit</span>{% endif %}
-        <strong>{{ r.name }}</strong></td>
-      <td>{% if r.pct is not none %}<div class="bar"><span style="width: {{ r.pct }}%"></span></div>{% endif %}<span class="small">{{ r.text }}</span></td>
+<p class="statline small"><strong>{{ st.topics }}</strong> Themen · <strong>{{ st.articles }}</strong> Meldungen ·
+  <span class="dot pos"></span>{{ st.positive }} positiv <span class="dot neu"></span>{{ st.neutral }} neutral <span class="dot neg"></span>{{ st.negative }} negativ</p>
+<div class="scroll">
+<table class="list jobs">
+  <thead><tr><th>Arbeit</th><th>Zustand</th><th>Zuletzt</th><th>Zahlen</th><th>Details</th><th></th></tr></thead>
+  {% for group, rows in job_groups(jobs) %}
+  <tbody>
+    <tr class="jobgroup"><th colspan="6">{{ group }}</th></tr>
+    {% for j in rows %}
+    <tr class="job st-{{ j.state }}" id="job-{{ j.key }}">
+      <td class="j-name" data-label="Arbeit"><strong>{{ j.name }}</strong></td>
+      <td class="j-state" data-label="Zustand"><span class="state {{ j.state }}" title="{{ j.state_meaning }}">{% if j.state == 'run' %}<span class="spinner inline"></span>{% endif %}{{ j.state_label }}</span></td>
+      <td class="j-last small" data-label="Zuletzt">{{ j.last }}</td>
+      <td class="j-num small" data-label="Zahlen">{{ j.numbers }}{% if j.pct is not none %}<div class="bar"><span style="width: {{ j.pct }}%"></span></div>{% endif %}</td>
+      <td class="j-details small" data-label="Details">{{ j.details }}</td>
+      <td class="j-act" data-label="">{% if j.actions %}<div class="actions">{% for label, url, style in j.actions %}{% if style == 'link' %}<a class="small" href="{{ url }}">{{ label }}</a>{% else %}<form method="post" action="{{ url }}"{% if url == '/admin/regroup' %} onsubmit="return confirm('Themenbildung für alle automatisch gebildeten Themen neu durchlaufen?')"{% endif %}><button class="{{ style or '' }} small-btn">{{ label }}</button></form>{% endif %}{% endfor %}</div>{% endif %}</td>
     </tr>
-  {% endfor %}</tbody>
+    {% endfor %}
+  </tbody>
+  {% endfor %}
 </table>
-<div class="actions">
-  <form method="post" action="/admin/reclassify"><button class="secondary" {{ 'disabled' if st.reclassify_running }}>Bewertungen neu berechnen</button></form>
-  <form method="post" action="/admin/regroup" onsubmit="return confirm('Alle automatisch gebildeten Themen neu bündeln?')"><button class="secondary">Themen neu bündeln</button></form>
 </div>
+<details class="legend small"><summary>Was bedeuten die Zustände?</summary>
+  <ul>{% for code, v in states.items() %}<li><span class="state {{ code }}">{{ v[0] }}</span> {{ v[1] }}</li>{% endfor %}</ul>
+</details>

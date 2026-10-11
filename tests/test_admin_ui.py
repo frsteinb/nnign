@@ -59,7 +59,8 @@ def test_status_shows_background_work(env):
     c = _admin()
     try:
         page = c.get("/admin").text
-        for needle in ("Hintergrundarbeiten", "Themen-Bündelung", "Neuberechnung der Bewertungen", 'id="dienste"',
+        for needle in ("Status der Arbeiten", "Themenbildung (automatisch)", "Bewertung nach Regeln", "Lernendes Modell",
+                       "Entscheidungsmodell (Zero-Shot)", "KI (Sprachmodell)", "Historie (Archive", "Was bedeuten die Zustände",
                        'class="subnav"', "Einstellung suchen", 'class="setgroup"', "admin.js"):
             assert needle in page, needle
         pipeline.STATUS["regroup"] = {"done": 50, "total": 200}
@@ -67,13 +68,14 @@ def test_status_shows_background_work(env):
         try:
             r = c.get("/fragment/admin-status")
             assert r.headers["X-Busy"] == "1"
-            assert "50 von 200 Meldungen" in r.text and "steht an" in r.text and "width: 25%" in r.text
+            assert "50 von 200 Meldungen" in r.text and "width: 25%" in r.text
+            assert 'class="state queued"' in r.text and "Bewertungen werden neu berechnet" in r.text
         finally:
             pipeline.STATUS["regroup"] = None
         pipeline.reclassify()
         config.state_set("pending_reclassify", False)
         t = c.get("/fragment/admin-status").text
-        assert "zuletzt" in t and "Meldungen" in t
+        assert "gerade eben" in t
         assert c.get("/").text.count("admin.js") == 1                    # Admin-Skript auch auf der Startseite
     finally:
         c.__exit__(None, None, None)
@@ -116,7 +118,25 @@ def test_backfill_state_finished_vs_running(env):
     assert p["state"] == "fertig" and p["percent"] == 100 and p["failed"] == 1
     try:
         t = c.get("/fragment/admin-status").text
-        assert "abgeschlossen" in t and "1 fehlgeschlagen" in t and "fehlgeschlagene wiederholen" in t
-        assert "· läuft" not in t and "Anhalten" not in t
+        assert "Erfassungszeitraum vollständig abgerufen" in t and "1 fehlgeschlagen" in t
+        assert "fehlgeschlagene wiederholen" in t and ">Anhalten<" not in t
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_sources_table_and_toggle(env):
+    from app import db, pipeline
+    setup_world(env)
+    pipeline.run_scan("initial")
+    c = _admin()
+    try:
+        page = c.get("/admin").text
+        assert 'class="list sources"' in page and "Testmedium A" in page and 'data-toggle-row="src-' in page
+        sid = db.query_one("SELECT id FROM sources WHERE name='Testmedium A'")["id"]
+        d = c.post(f"/admin/sources/{sid}/toggle", headers=FETCH).json()
+        assert "deaktiviert" in d["msg"] and d["reload"]
+        assert db.query_one("SELECT enabled FROM sources WHERE id=?", (sid,))["enabled"] == 0
+        c.post(f"/admin/sources/{sid}/toggle", headers=FETCH)
+        assert db.query_one("SELECT enabled FROM sources WHERE id=?", (sid,))["enabled"] == 1
     finally:
         c.__exit__(None, None, None)

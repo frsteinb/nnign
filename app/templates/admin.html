@@ -4,7 +4,7 @@
 <div class="admin-head">
   <h1>Administration</h1>
   <nav class="subnav" aria-label="Abschnitte">
-    <a href="#status">Status</a><a href="#dienste">Dienste</a><a href="#bewertung">Bewertung</a><a href="#daten">Daten</a>
+    <a href="#status">Status</a><a href="#bewertung">Bewertung</a><a href="#daten">Daten</a>
     <a href="#einstellungen">Einstellungen</a><a href="#quellen">Quellen</a><a href="#laeufe">Protokoll</a><a href="#geraete">Geräte</a>
   </nav>
 </div>
@@ -13,60 +13,16 @@
 {% include "_suggestions.html" %}
 
 <section class="card" id="status">
-  <h2>Status</h2>
+  <h2>Status der Arbeiten</h2>
   <div id="admin-status" data-poll="/fragment/admin-status">{% include "_admin_status.html" %}</div>
-</section>
-
-<section class="card" id="dienste">
-  <h2>Dienste</h2>
-  <p class="muted small">Die Tests verwenden die <em>gespeicherten</em> Einstellungen; das Ergebnis erscheint direkt am Knopf.</p>
-  <div class="tiles">
-    <div class="tile">
-      <h3>KI (Sprachmodell)</h3>
-      <p class="small">{{ llm_name }}{% if st.llm_calls_today %} · heute {{ st.llm_calls_today }} Aufrufe{% endif %}</p>
-      <div class="actions">
-        <form method="post" action="/admin/llm-test"><button>Verbindung testen</button></form>
-        <form method="post" action="/admin/llm-models"><button class="secondary">Verfügbare Modelle</button></form>
-        <a class="small" href="#g-KI" data-open-group="KI">Einstellungen</a>
-      </div>
-    </div>
-    <div class="tile">
-      <h3>Übersetzung</h3>
-      <p class="small">{{ translate_name }}
-        {% for lang, f in st.foreign.items() %}<br>{{ languages.get(lang, lang) }}: {{ f.n }} Meldungen, {{ f.done or 0 }} übersetzt{% endfor %}</p>
-      <div class="actions">
-        <form method="post" action="/admin/translate-test"><button>Übersetzung testen</button></form>
-        {% if st.foreign %}<form method="post" action="/admin/translate-pending"><button class="secondary">Jetzt nachübersetzen</button></form>{% endif %}
-        <a class="small" href="#g-Übersetzung" data-open-group="Übersetzung">Einstellungen</a>
-      </div>
-    </div>
-    <div class="tile">
-      <h3>Zero-Shot-Klassifikation</h3>
-      <p class="small">{{ zs_name }}</p>
-      <div class="actions">
-        <form method="post" action="/admin/zeroshot-test"><button>Zero-Shot testen</button></form>
-        <a class="small" href="#g-Bewertungsverfahren" data-open-group="Bewertungsverfahren">Einstellungen</a>
-      </div>
-    </div>
-  </div>
 </section>
 
 <section class="card" id="bewertung">
   <h2>Bewertungsverfahren</h2>
-  <p class="muted small">Gewählt: <strong>{{ engines.choice }}</strong> (<a href="#g-Bewertungsverfahren" data-open-group="Bewertungsverfahren">ändern</a>).
-    Bei „auto“ bestimmt das beste verfügbare Verfahren die Tonalität: KI, sonst Zero-Shot, sonst lernendes Modell, sonst Regeln.
-    {{ engines.manual }} Themen sind vom Admin bewertet und bleiben unverändert.</p>
-  <div class="scroll"><table class="list">
-    <thead><tr><th>Verfahren</th><th>Status</th><th>Themen</th><th>Kosten</th></tr></thead>
-    <tbody>{% for e in engines.rows %}
-      <tr class="{{ '' if e.allowed else 'muted' }}"><td><strong>{{ e.name }}</strong>{% if not e.allowed %} <span class="badge">nicht gewählt</span>{% endif %}</td>
-        <td class="small">{{ e.status }}{% if e.open %}<br>{{ e.open }} Themen warten auf Bewertung{% endif %}</td>
-        <td>{{ e.n }}</td><td class="small">{{ e.cost }}</td></tr>
-    {% endfor %}</tbody>
-  </table></div>
-  <div class="actions">
-    <form method="post" action="/admin/learned-train"><button class="secondary">Lernendes Modell jetzt trainieren</button></form>
-  </div>
+  <p class="small">Gewählt: <strong>{{ engines.choice }}</strong> (<a href="#g-Bewertungsverfahren" data-open-group="Bewertungsverfahren">ändern</a>).
+    „auto“ nimmt das beste verfügbare Verfahren: KI-Sprachmodell, sonst Entscheidungsmodell (Zero-Shot), sonst lernendes Modell,
+    sonst Regeln. {{ engines.manual }} Themen hat der Admin selbst bewertet; sie bleiben unverändert. Den Stand der einzelnen
+    Verfahren zeigt der <a href="#status">Status</a>.</p>
   <details><summary>Verfahren mit eigenem Text vergleichen</summary>
     <form method="post" action="/admin/classify-test" class="stack" data-nav>
       <label>Titel <input name="title" required placeholder="z. B. Porsche senkt erneut die Renditeprognose"></label>
@@ -207,19 +163,31 @@
 
 <section class="card" id="quellen">
   <h2>Quellen</h2>
-  <p class="muted small">Archiv-Vorlage: Platzhalter {YYYY} {MM} {DD} {M} {D} {WW}. Link-Muster: regulärer Ausdruck, dem Artikel-URLs auf Archivseiten entsprechen müssen. Nach Änderungen „Backfill (neu) planen“.</p>
-  {% for s in sources %}
-  <details class="source">
-    <summary><strong>{{ s.name }}</strong> <span class="muted">{{ s.domain }}</span>
-      {% if s.language and s.language != 'de' %}<span class="lang">{{ lang_short.get(s.language, s.language|upper) }}</span>{% endif %}
-      {% if not s.enabled %}<span class="badge">deaktiviert</span>{% endif %}
-      <span class="muted small">· {{ s.last_fetch_at|dt }} · {{ s.last_items if s.last_items is not none else '–' }} Meldungen ·
-        <span class="{{ 'ok' if s.last_status == 'ok' else 'warn' }}">{{ (s.last_status or '–')[:120] }}</span></span></summary>
-    {% with s=s, action='/admin/sources/' ~ s.id %}{% include "source_form.html" %}{% endwith %}
-    <form method="post" action="/admin/sources/{{ s.id }}/delete" onsubmit="return confirm('Quelle löschen?')"><button class="danger">Quelle löschen</button></form>
-  </details>
-  {% endfor %}
+  <p class="muted small">{{ sources|selectattr('enabled')|list|length }} von {{ sources|length }} Quellen aktiv. Neue oder
+    geänderte Quellen holt nnign automatisch nach. „Bearbeiten“ öffnet Feeds, Archiv und Sprache.</p>
+  <div class="scroll"><table class="list sources">
+    <thead><tr><th>Quelle</th><th>Sprache</th><th>Abrufwege</th><th>Meldungen</th><th>Letzter Abruf</th><th>Aktiv</th><th></th></tr></thead>
+    <tbody>{% for s in sources %}{% set feeds = (s.feeds or '').split() %}{% set ok = s.last_status == 'ok' %}
+      <tr class="{{ '' if s.enabled else 'muted' }}">
+        <td><strong>{{ s.name }}</strong><br><span class="muted small">{{ s.domain }}</span></td>
+        <td>{{ lang_short.get(s.language, 'DE') if s.language else 'DE' }}</td>
+        <td class="small">{% if feeds %}{{ feeds|length }} Feed{{ 's' if feeds|length > 1 }}{% endif %}{% if s.use_search %}{{ ' · ' if feeds }}Suche{% endif %}{% if s.archive_template %} · Archiv ({{ {'day': 'täglich', 'week': 'wöchentl.', 'month': 'monatl.', 'year': 'jährl.'}.get(s.archive_step, s.archive_step) }}){% endif %}</td>
+        <td class="small">{{ source_counts.get(s.domain, 0) }}</td>
+        <td class="small">{% if s.last_fetch_at %}{{ s.last_fetch_at|dt }}<br>
+          {% if ok %}<span class="state ok">ok</span> {{ s.last_items }} gefunden{% else %}<span class="state problem" title="{{ s.last_status }}">Fehler</span>
+          <span class="muted">{{ (s.last_status or '')[:70] }}{{ '…' if (s.last_status or '')|length > 70 }}</span>{% endif %}
+          {% else %}<span class="muted">noch nicht abgerufen</span>{% endif %}</td>
+        <td><form method="post" action="/admin/sources/{{ s.id }}/toggle"><button class="switch {{ 'on' if s.enabled }}" role="switch" aria-checked="{{ 'true' if s.enabled else 'false' }}" title="{{ 'deaktivieren' if s.enabled else 'aktivieren' }}"><span></span></button></form></td>
+        <td><button type="button" class="link" data-toggle-row="src-{{ s.id }}">Bearbeiten</button></td>
+      </tr>
+      <tr class="edit-row" id="src-{{ s.id }}" hidden><td colspan="7">
+        {% with s=s, action='/admin/sources/' ~ s.id %}{% include "source_form.html" %}{% endwith %}
+        <form method="post" action="/admin/sources/{{ s.id }}/delete" onsubmit="return confirm('Quelle „{{ s.name }}“ löschen?')"><button class="danger small-btn">Quelle löschen</button></form>
+      </td></tr>
+    {% endfor %}</tbody>
+  </table></div>
   <details class="source"><summary><strong>+ Neue Quelle</strong></summary>
+    <p class="muted small">Archiv-Vorlage: Platzhalter {YYYY} {MM} {DD} {M} {D} {WW}. Link-Muster: regulärer Ausdruck, dem Artikel-Adressen auf Archivseiten entsprechen müssen.</p>
     {% with s=None, action='/admin/sources' %}{% include "source_form.html" %}{% endwith %}
   </details>
 </section>

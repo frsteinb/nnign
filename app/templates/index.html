@@ -117,7 +117,7 @@
 
 <p class="muted">{{ total }} Themen{% if args.year %} im Jahr {{ args.year }}{% endif %} ·
   <a href="/export.csv?{{ request.query_params }}">als CSV</a> ·
-  {% if select %}<a href="{{ qs(auswahl='') }}">Auswahl beenden</a>{% else %}<a href="{{ qs(auswahl='1') }}" title="Nur für den Admin">Themen zusammenführen</a>{% endif %}</p>
+  {% if select %}<a href="{{ qs(auswahl='') }}">Auswahl beenden</a>{% else %}<a href="{{ qs(auswahl='1') }}" title="Nur für den Admin: ausgewählte Themen von Hand zu einem zusammenlegen">Themen von Hand zusammenführen</a>{% endif %}</p>
 
 {% if select %}
 <div class="selecthint card small">{% if msg %}<strong>{{ msg }}.</strong> {% endif %}Auswahlmodus: Themen ankreuzen, die dieselbe Geschichte betreffen, und unten

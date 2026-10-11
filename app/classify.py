@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from . import config, db, features
+from . import config, db, features, llm
 
 log = logging.getLogger(__name__)
 
@@ -206,7 +206,7 @@ def maybe_retrain() -> bool:
 
 # ---------------------------------------------------------------------------------- Zero-Shot (Hugging Face)
 
-_zs_pause = {"until": 0.0, "reason": ""}
+_zs_pause = {"until": 0.0, "reason": "", "error": ""}
 
 
 def zs_token() -> str:
@@ -247,7 +247,7 @@ def zs_status() -> str:
     if _zs_pause["until"] > time.time():
         return f"pausiert ({_zs_pause['reason']}), danach automatisch weiter"
     if _zs_calls_today() >= int(config.get("zeroshot_max_calls_per_day")):
-        return "Tageslimit erreicht – weiter ab Mitternacht (UTC)"
+        return f"Tageslimit erreicht – weiter ab {llm._local(llm._next_utc_midnight())} Uhr"
     return f"aktiv: {config.get('zeroshot_model')} · heute {_zs_calls_today()} Aufrufe"
 
 
@@ -296,6 +296,7 @@ def predict_zeroshot(title: str, body: str) -> tuple[str, float, dict] | None:
         return None
     if resp.status_code >= 400:
         log.warning("Zero-Shot: HTTP %s %s", resp.status_code, resp.text[:200])
+        _zs_pause["error"] = f"HTTP {resp.status_code}: {resp.text[:150]}"
         if resp.status_code == 402:
             _zs_pause.update(until=time.time() + 6 * 3600, reason="kostenloses Kontingent aufgebraucht")
         return None
@@ -313,6 +314,8 @@ def predict_zeroshot(title: str, body: str) -> tuple[str, float, dict] | None:
     scores = {phrase_to_label.get(lbl, lbl): float(sc) for lbl, sc in pairs if phrase_to_label.get(lbl, lbl) in LABELS}
     if not scores:
         return None
+    config.state_set("zs_last", db.utcnow())
+    _zs_pause["error"] = ""
     best = max(scores, key=scores.get)
     return best, scores[best], scores
 

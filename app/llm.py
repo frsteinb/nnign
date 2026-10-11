@@ -241,12 +241,17 @@ class _LastProblem(logging.Handler):
     def __init__(self):
         super().__init__(logging.WARNING)
         self.msg = ""
+        self.at = 0.0
 
     def emit(self, record):
         try:
             self.msg = record.getMessage()[:300]
+            self.at = time.time()
         except Exception:
             pass
+
+    def recent(self, hours: float = 6) -> str:
+        return self.msg if self.msg and time.time() - self.at < hours * 3600 else ""
 
 
 last_problem = _LastProblem()
@@ -325,18 +330,32 @@ def blocked_reason() -> str:
     if not available():
         return ""
     if not _budget_ok():
-        return "Tageslimit erreicht – weiter ab Mitternacht (UTC)"
+        return f"Tageslimit erreicht – weiter ab {_local(_next_utc_midnight())} Uhr"
     if choose_slot():
         return ""
     until = paused_until() if not missing() else 0.0
     if until:
-        return f"pausiert bis {datetime.fromtimestamp(until, timezone.utc).strftime('%H:%M')} UTC ({_pause['reason']})"
+        return f"pausiert bis {_local(until)} Uhr ({_pause['reason']})"
     with using("fallback"):
         fu = paused_until() if not missing() else 0.0
         reason = _p()["reason"]
     if fu:
-        return f"pausiert bis {datetime.fromtimestamp(fu, timezone.utc).strftime('%H:%M')} UTC ({reason})"
+        return f"pausiert bis {_local(fu)} Uhr ({reason})"
     return ""
+
+
+def _next_utc_midnight() -> float:
+    now = datetime.now(timezone.utc)
+    return datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp() + 86400
+
+
+def _local(ts: float) -> str:
+    from zoneinfo import ZoneInfo
+    try:
+        tz = ZoneInfo(config.get("timezone"))
+    except Exception:
+        tz = timezone.utc
+    return datetime.fromtimestamp(ts, tz).strftime("%H:%M")
 
 
 def pause_info(slot: str = "primary") -> tuple[float, str]:
@@ -678,10 +697,10 @@ def _test_slot() -> str:
     if reason:
         return f"nicht nutzbar: {reason}"
     if not _budget_ok():
-        return "Tageslimit erreicht – weiter ab Mitternacht (UTC)"
+        return f"Tageslimit erreicht – weiter ab {_local(_next_utc_midnight())} Uhr"
     until, why = paused_until(), _p()["reason"]
     if until:
-        return (f"pausiert bis {datetime.fromtimestamp(until, timezone.utc).strftime('%H:%M')} UTC ({why}) – "
+        return (f"pausiert bis {_local(until)} Uhr ({why}) – "
                 "danach automatisch weiter")
     last_problem.msg = ""
     res = _analyze({"title": "Volkswagen meldet Rekordabsatz bei Elektroautos", "summary": "",

@@ -321,3 +321,46 @@ details.setgroup[open] > summary { border-bottom: 1px solid var(--line); margin-
 .pill.done { border-color: var(--ok); color: var(--ok); }
 .tile h3 .pill { margin-left: 6px; font-weight: 400; }
 .badge.partner { background: var(--neu-bg); color: var(--ink-2); border: 1px dashed var(--neu); }
+
+/* Arbeiten-Tabelle */
+.statline { margin: 0 0 8px; }
+table.jobs td, table.jobs th { vertical-align: top; padding: 8px 8px; }
+table.jobs tr.jobgroup th { background: var(--bg); text-align: left; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted); padding: 10px 8px 4px; }
+table.jobs .j-name { min-width: 170px; }
+table.jobs .j-state { white-space: nowrap; }
+table.jobs .j-last { white-space: nowrap; color: var(--muted); }
+table.jobs .j-num { min-width: 150px; }
+table.jobs .j-details { min-width: 220px; color: var(--ink-2); }
+table.jobs .bar { margin-top: 4px; }
+table.jobs .actions { margin: 0; gap: 6px; }
+button.small-btn { font-size: 13px; padding: 4px 9px; }
+.state { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); white-space: nowrap; }
+.state.run { color: var(--accent); border-color: var(--accent); }
+.state.ok { color: var(--ok); border-color: var(--ok); }
+.state.queued { color: var(--accent); border-style: dashed; border-color: var(--accent); }
+.state.limit, .state.confirm { color: var(--warn); border-color: var(--warn); }
+.state.problem { color: #fff; background: var(--neg); border-color: var(--neg); }
+.state.paused, .state.setup, .state.inactive, .state.learning { color: var(--muted); }
+.legend ul { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 4px; }
+.legend li .state { margin-right: 6px; }
+@media (max-width: 760px) {
+  table.jobs thead { display: none; }
+  table.jobs, table.jobs tbody, table.jobs tr, table.jobs td { display: block; width: 100%; }
+  table.jobs tr.job { border-bottom: 1px solid var(--line); padding: 6px 0; }
+  table.jobs td { padding: 3px 4px; border: 0; min-width: 0 !important; }
+  table.jobs td[data-label]:not([data-label=""])::before { content: attr(data-label) ": "; color: var(--muted); font-size: 12px; }
+  table.jobs .j-name::before, table.jobs .j-state::before { content: none !important; }
+}
+
+/* Quellen-Tabelle */
+table.sources td { vertical-align: top; }
+table.sources tr.muted td { opacity: .6; }
+table.sources tr.edit-row td { background: var(--bg); padding: 12px; }
+button.switch { width: 38px; height: 22px; border-radius: 999px; padding: 0; position: relative; background: var(--line);
+  border: 0; cursor: pointer; }
+button.switch span { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--surface); transition: left .15s; }
+button.switch.on { background: var(--ok); }
+button.switch.on span { left: 19px; }

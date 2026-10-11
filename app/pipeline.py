@@ -281,7 +281,7 @@ def _heuristic_topic(conn, it, vec, pub, senti, best_sim, best_row, threshold, c
 
 
 def regroup() -> dict:
-    """Themen neu bündeln: alle automatisch gebildeten Themen auflösen und ihre Meldungen in
+    """Themenbildung neu durchlaufen: alle automatisch gebildeten Themen auflösen und ihre Meldungen in
     zeitlicher Reihenfolge mit dem aktuellen Verfahren neu zuordnen. Von Hand bearbeitete, gesperrte
     und von der KI gebildete Themen bleiben bestehen (neue Meldungen können ihnen zugeordnet werden).
     Läuft nach einem Update des Verfahrens automatisch einmal (siehe upgrade_on_start)."""

@@ -218,7 +218,7 @@ SETTINGS: list[Setting] = [
     # --- Themenbildung
     Setting("cluster_threshold", "float", 0.26, "Ähnlichkeitsschwelle Thema",
             "Ab dieser Ähnlichkeit (0..1) wird eine Meldung einem bestehenden Thema zugeordnet. Kleiner = mehr "
-            "zusammenfassen, größer = feiner trennen. Nach Änderung ggf. „Themen neu bündeln“.", "Themen"),
+            "zusammenfassen, größer = feiner trennen. Nach Änderung ggf. „Themenbildung neu durchlaufen“.", "Themen"),
     Setting("cluster_window_days", "int", 6, "Themen-Zeitfenster (Tage)",
             "Ein Artikel kann nur Themen zugeordnet werden, deren letzte Meldung höchstens so lange zurückliegt.", "Themen"),
     Setting("cluster_max_span_days", "int", 14, "Max. Dauer eines Themas (Tage)",
