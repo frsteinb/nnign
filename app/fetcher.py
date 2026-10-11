@@ -72,7 +72,15 @@ def backend_of(url: str) -> str:
     return "web"
 
 
-def _track(backend: str, ok: bool, status: int | None = None, msg: str = "") -> None:
+def _wire_bytes(resp) -> int:
+    """Übertragene Bytes (komprimiert, wie im Netz) – ersatzweise die Größe des Inhalts."""
+    try:
+        return int(resp.num_bytes_downloaded) or len(resp.content)
+    except Exception:
+        return 0
+
+
+def _track(backend: str, ok: bool | None, status: int | None = None, msg: str = "", nbytes: int = 0) -> None:
     from . import db
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     with _stats_lock:
@@ -80,9 +88,13 @@ def _track(backend: str, ok: bool, status: int | None = None, msg: str = "") -> 
             _stats.update(config.state_get("backend_stats") or {})
         st = _stats.setdefault(backend, {})
         if st.get("day") != today:
-            st.update(day=today, ok=0, err=0, limit=0)
+            st.update(day=today, ok=0, err=0, limit=0, bytes=0)
         now = db.utcnow()
-        if ok:
+        st["bytes"] = st.get("bytes", 0) + nbytes
+        st["bytes_total"] = st.get("bytes_total", 0) + nbytes
+        if ok is None:
+            pass
+        elif ok:
             st["ok"] = st.get("ok", 0) + 1
             st["last_ok"] = now
         else:
@@ -93,7 +105,7 @@ def _track(backend: str, ok: bool, status: int | None = None, msg: str = "") -> 
             if status in (429, 503):
                 st["limit"] = st.get("limit", 0) + 1
                 st["last_limit"] = now
-        if not ok or time.time() - _stats_saved[0] > 60:
+        if ok is False or time.time() - _stats_saved[0] > 60:
             _stats_saved[0] = time.time()
             config.state_set("backend_stats", _stats)
 
@@ -123,6 +135,7 @@ class Http:
         self._locks: dict[str, threading.Lock] = {}
         self._last: dict[str, float] = {}
         self._guard = threading.Lock()
+        self.bytes = 0          # Datenverkehr dieses Clients (für die Abschätzung des Historie-Abrufs)
 
     def _host_lock(self, host: str) -> threading.Lock:
         with self._guard:
@@ -152,12 +165,17 @@ class Http:
                     pause = 30.0
                 log.info("HTTP %s von %s – warte %.0f s", resp.status_code, host, pause)
                 time.sleep(pause)
+        nbytes = _wire_bytes(resp)
+        with self._guard:
+            self.bytes += nbytes
         if resp.status_code >= 400:
             # 404 einzelner Archivseiten ist normal und kein Störungszeichen des Abrufwegs
             if resp.status_code != 404:
-                _track(backend_of(url), False, resp.status_code, f"HTTP {resp.status_code} für {url[:120]}")
+                _track(backend_of(url), False, resp.status_code, f"HTTP {resp.status_code} für {url[:120]}", nbytes)
+            else:
+                _track(backend_of(url), None, nbytes=nbytes)   # zählt nur als Datenverkehr
             raise FetchError(f"HTTP {resp.status_code} für {url}")
-        _track(backend_of(url), True)
+        _track(backend_of(url), True, nbytes=nbytes)
         return resp
 
     def close(self):

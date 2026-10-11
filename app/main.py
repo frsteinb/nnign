@@ -21,14 +21,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, classify, config, db, llm, maintenance, pipeline, prompts, sentiment, sources, topics, translate
+from . import auth, classify, config, db, gapfill, llm, maintenance, pipeline, prompts, sentiment, sources, topics, translate
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.13.0"
+VERSION = "1.14.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -165,6 +165,7 @@ def _job_groups(jobs):
 
 
 templates.env.globals["job_groups"] = _job_groups
+templates.env.globals["fmt_duration"] = gapfill.fmt_duration
 templates.env.globals["suggestions"] = lambda: maintenance.suggestions()
 templates.env.globals["symbol"] = {"positiv": "▲", "neutral": "●", "negativ": "▼"}
 templates.env.globals["languages"] = sources.LANGUAGES
@@ -464,6 +465,7 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
         "items": items, "total": total, "page": page, "pages": max(1, -(-total // size)), "args": args,
         "order": order, "timeline": tl, "max_v": max_v, "domains": domains, "status": status_info(),
         "coverage": maintenance.coverage_by_year(),
+        "gap": gapfill.estimate() if config.get("gapfill_enabled") else None,
         "activity": acts, "more_url": "/fragment/topics?" + urlencode({**base_q, "order": order, "page": page + 1})
         if page * size < total else "",
         "stats": stats(args), "period_since": pipeline.period()[0].isoformat(),

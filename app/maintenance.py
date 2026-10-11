@@ -18,10 +18,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import time
 from datetime import date, datetime, timedelta, timezone
 
-from . import classify, config, db, hubs, llm, refine, sentiment, topics, translate
+from . import classify, config, db, gapfill, hubs, llm, refine, sentiment, topics, translate
 
 log = logging.getLogger(__name__)
 
@@ -604,6 +605,13 @@ def coverage_by_year() -> list[dict]:
     counts = sorted((rows.get(str(y), {}).get("n", 0) for y in years), reverse=True)
     top = counts[: max(1, len(counts) // 4)]
     ref = max(1.0, sum(top) / len(top)) if top else 1.0
+    gap = gapfill.months_state()
+    if gap["target"]:                                 # Maßstab: Meldungsdichte der aktuellen Lage
+        ref = max(1.0, gap["target"] * 12.0)
+    gap_open: dict[str, int] = {}
+    for m in gap["months"]:
+        if m["state"] == "offen":
+            gap_open[m["month"][:4]] = gap_open.get(m["month"][:4], 0) + 1
     out = []
     today = _now().date()
     for y in years:
@@ -621,7 +629,8 @@ def coverage_by_year() -> list[dict]:
                     "open": t["open"] or 0, "ok": t["ok"] or 0, "failed": t["failed"] or 0, "total": t["total"] or 0,
                     "refined": t["refined"] or 0,
                     "sources": {k: r.get(k) or 0 for k in ("live", "archiv", "wayback", "hub")},
-                    "growing": bool(t["open"])})
+                    "gap_months": gap_open.get(str(y), 0),
+                    "growing": bool(t["open"] or gap_open.get(str(y)))})
     return out
 
 
@@ -671,6 +680,39 @@ def _queued_note() -> str:
     if pipeline.STATUS.get("scan"):
         return "startet nach dem laufenden Abruf"
     return "startet in Kürze (die Hintergrundsteuerung prüft alle 30 Sekunden)"
+
+
+def _gapfill_row(add, bf) -> None:
+    """Lückenschluss: Monate auf Zielniveau, Restaufwand (Zeit, Datenverkehr)."""
+    est = gapfill.estimate()
+    if not est["target"]:
+        add("Abruf", "gapfill", "Lückenschluss bis zum Niveau der aktuellen Lage", "ok", "–", "–",
+            "nichts zu tun – der Erfassungszeitraum reicht nicht vor die letzten vollständigen Monate zurück")
+        return
+    total = len(est["months"])
+    done = est["reached"] + est["exhausted"]
+    ref = f"{est['reference'][0]} bis {est['reference'][-1]}"
+    nums = (f"{est['reached']} von {total} Monaten auf Zielniveau" + (f", {est['exhausted']} ausgeschöpft"
+            if est["exhausted"] else "") + f" · Ziel ≥ {math.ceil(est['target'] * est['pct'] / 100)} Meldungen/Monat "
+            f"({est['pct']} % von {est['target']}, Referenz {ref})")
+    thin = sorted((m for m in est["months"] if m["state"] == "offen"), key=lambda m: m["ratio"])[:3]
+    thin_txt = ", ".join(f"{m['month']} ({m['articles']}/{m['target']})" for m in thin)
+    work = (f"noch bis zu {est['tasks']} Abrufe · {gapfill.fmt_duration(est['seconds'])} · "
+            f"≈ {gapfill.fmt_bytes(est['bytes'])} Datenverkehr"
+            + ("" if est["rate"]["measured"] else " (grobe Annahme, wird gemessen)"))
+    if not config.get("gapfill_enabled"):
+        state, details = "inactive", "in den Einstellungen abgeschaltet (Archiv / Backfill → Lücken fortlaufend schließen)"
+    elif not est["open_months"]:
+        state = "ok"
+        details = ("alle Monate auf Zielniveau" if not est["exhausted"] else
+                   "alle erreichbaren Lücken geschlossen; ausgeschöpfte Monate werden nach 30 Tagen erneut geprüft")
+    elif bf["state"] == "angehalten":
+        state, details = "paused", "Historie-Abruf ist angehalten · " + work
+    else:
+        state = "run" if bf["state"] == "aktiv" else "queued"
+        details = work + (f" · dünnste Monate: {thin_txt}" if thin_txt else "")
+    add("Abruf", "gapfill", "Lückenschluss bis zum Niveau der aktuellen Lage", state,
+        _ago(config.state_get("gapfill_last")), nums, details, pct=_pct(done, total) if est["open_months"] else None)
 
 
 def jobs() -> list[dict]:
@@ -728,15 +770,18 @@ def jobs() -> list[dict]:
     else:
         state = "run" if bf["state"] == "aktiv" else "queued"
         details = bf["state_text"] if state == "run" else f"noch {bf['open']} Abrufe offen – nächster Durchgang in Kürze"
-        sess = st.get("backfill_session") or {}
-        if sess.get("tasks") and time.time() - sess.get("started", time.time()) > 60:
-            rate = sess["tasks"] / (time.time() - sess["started"])
-            details += f" · noch etwa {_dur(bf['open'] / rate).replace('etwa ', '')}"
+        r = gapfill.rate()
+        details += (f" · noch {gapfill.fmt_duration(bf['open'] * r['sec_per_task'])}, "
+                    f"≈ {gapfill.fmt_bytes(bf['open'] * r['bytes_per_task'])} Datenverkehr")
         actions.append(("Anhalten", "/admin/backfill/toggle", "secondary"))
     if bf["failed"]:
         actions.append((f"{bf['failed']} fehlgeschlagene wiederholen", "/admin/backfill/reset", "secondary"))
+    r = gapfill.rate()
+    if r["bytes"]:
+        nums += f" · bisher {gapfill.fmt_bytes(r['bytes'])} Datenverkehr"
     add("Abruf", "backfill", "Historie (Archive, Suche, Internet Archive)", state, _ago(last_bf), nums, details, actions,
         pct=bf["percent"] if state in ("run", "queued", "paused") else None)
+    _gapfill_row(add, bf)
 
     catch = config.state_get("pending_catchup") or []
     if catch:
@@ -975,7 +1020,11 @@ def backends() -> list[dict]:
         cur = s.get("day") == today
         ok_n, err_n, lim_n = (s.get("ok", 0), s.get("err", 0), s.get("limit", 0)) if cur else (0, 0, 0)
         last = _later(s.get("last_ok"), s.get("last_err"))
-        numbers = f"heute {ok_n} erfolgreich, {err_n} Fehler" + (f", {lim_n}× Limit" if lim_n else "") + extra.get(key, "")
+        numbers = f"heute {ok_n} erfolgreich, {err_n} Fehler" + (f", {lim_n}× Limit" if lim_n else "")
+        if s.get("bytes_total"):
+            numbers += (f" · Datenverkehr heute {gapfill.fmt_bytes(s.get('bytes', 0) if cur else 0)}, "
+                        f"gesamt {gapfill.fmt_bytes(s['bytes_total'])}")
+        numbers += extra.get(key, "")
         err_after_ok = s.get("last_err") and (not s.get("last_ok") or s["last_err"] > s["last_ok"])
         recent_limit = s.get("last_limit") and (not s.get("last_ok") or s["last_limit"] > s["last_ok"])
         if not use.get(key, True):

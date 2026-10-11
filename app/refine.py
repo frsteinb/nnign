@@ -39,13 +39,24 @@ def search_splits(task, n_items: int, src) -> list[tuple]:
     if (end - start).days + 1 < MIN_WINDOW_DAYS * 2:
         return []
     from .pipeline import _query_for
+    query = query_of(task["target"]) or _query_for(src)
     mid = start + (end - start) // 2
     out = []
     for a, b in ((start, mid), (mid + timedelta(days=1), end)):
-        url = fetcher.search_url(_query_for(src), src["domain"], after=a - timedelta(days=1),
+        url = fetcher.search_url(query, src["domain"], after=a - timedelta(days=1),
                                  before=b + timedelta(days=1), lang=fetcher.src_lang(src))
         out.append(("search", url, a, b, BASE_PRIORITY + task["depth"], task["depth"] + 1))
     return out
+
+
+def query_of(url: str) -> str:
+    """Suchbegriffe einer Such-URL (ohne site:/after:/before:), damit Halbierungen dieselbe Anfrage stellen."""
+    from urllib.parse import parse_qs, urlsplit
+    q = (parse_qs(urlsplit(url).query).get("q") or [""])[0]
+    q = q.split(" site:", 1)[0].split(" after:", 1)[0].split(" before:", 1)[0].strip()
+    if q.startswith("(") and q.endswith(")"):
+        q = q[1:-1]
+    return q
 
 
 def _feed_of(target: str) -> str:

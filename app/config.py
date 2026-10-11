@@ -172,6 +172,13 @@ SETTINGS: list[Setting] = [
     Setting("backfill_wayback_refine_depth", "int", 3, "Wayback-Lücken füllen (Stufen)",
             "Zwischen zwei Schnappschüssen mit Lücke wird der mittlere weitere abgerufen, so viele Halbierungen tief "
             "(3 = bis zu 7 zusätzliche Schnappschüsse je Lücke; 0 = aus).", "Archiv / Backfill"),
+    Setting("gapfill_enabled", "bool", True, "Lücken fortlaufend schließen",
+            "Ist der Historie-Abruf abgearbeitet, plant nnign für die am dünnsten erfassten Monate laufend weitere Abrufe "
+            "ein (weitere Wayback-Schnappschüsse, Suche mit Einzelbegriffen in Wochenfenstern, erneute Versuche), bis "
+            "jeder Monat das Zielniveau erreicht oder alle Wege ausgeschöpft sind.", "Archiv / Backfill"),
+    Setting("gapfill_target_percent", "int", 80, "Zielniveau (% der aktuellen Lage)",
+            "Ein Monat gilt als geschlossen, wenn er so viel Prozent der Meldungsdichte der letzten drei vollständigen "
+            "Monate erreicht.", "Archiv / Backfill"),
     Setting("backfill_wayback_fallback", "bool", True, "Archivseiten notfalls über Wayback laden",
             "Wenn eine Archivseite direkt nicht erreichbar ist, wird der nächstgelegene Wayback-Schnappschuss versucht.",
             "Archiv / Backfill"),

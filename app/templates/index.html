@@ -85,7 +85,7 @@
   {% set growing = coverage|selectattr('growing')|list %}
   <p class="covnote small"><span class="covkey"><span class="cov gut"></span>gut <span class="cov mittel"></span>mittel <span class="cov dünn"></span>dünn erfasst</span>
     {% if thin %}Datenlage: {{ thin|length }} Jahr{{ 'e' if thin|length > 1 }} nur dünn erfasst{% if thin|length <= 6 %} ({{ thin|join(', ') }}){% else %} ({{ thin[0] }}–{{ thin[-1] }}, mit Ausnahmen){% endif %} – dort sind die Zahlen eher Stichproben als vollständig.{% endif %}
-    {% if growing %} Der Historie-Abruf ergänzt noch {{ growing|sum(attribute='open') }} Abrufe{% if growing|length <= 8 %} für {{ growing|map(attribute='year')|join(', ') }}{% endif %}; Lücken werden laufend geschlossen.{% endif %}
+    {% if growing %} Der Historie-Abruf ergänzt noch {{ growing|sum(attribute='open') }} Abrufe{% if growing|length <= 8 %} für {{ growing|map(attribute='year')|join(', ') }}{% endif %}; Lücken werden laufend geschlossen{% if gap and gap.open_months %} – {{ gap.reached }} von {{ gap.months|length }} Monaten haben das Niveau der aktuellen Lage erreicht, Restdauer {{ fmt_duration(gap.seconds) }}{% endif %}.{% endif %}
     <a href="/doku#datenlage">Warum?</a></p>
   {% endif %}
   <details class="table-view"><summary>Als Tabelle</summary>

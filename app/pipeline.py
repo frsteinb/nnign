@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-from . import classify, config, db, fetcher, hubs, llm, refine, sentiment, topics, translate
+from . import classify, config, db, fetcher, gapfill, hubs, llm, refine, sentiment, topics, translate
 from .fetcher import FetchError, Item
 from .relevance import Matcher
 from .sources import all_sources, feeds_of
@@ -728,6 +728,7 @@ def backfill_batch(http: fetcher.Http) -> int:
           "started": db.utcnow(), "new_articles_base": 0}
     STATUS["backfill"] = st
     done_lock = threading.Lock()
+    t0, bytes0 = time.time(), http.bytes
 
     def work(task):
         try:
@@ -751,6 +752,8 @@ def backfill_batch(http: fetcher.Http) -> int:
            fetch_details=bool(config.get("backfill_fetch_details")), progress=st)
     session["tasks"] += len(tasks)
     session["new_articles"] += ctx.new_articles - before
+    gapfill.record_batch(time.time() - t0, len(tasks), http.bytes - bytes0, ctx.new_articles - before,
+                         sum(1 for t in tasks if t["priority"] >= refine.BASE_PRIORITY) / len(tasks))
 
     matcher = Matcher.from_config()
     with db.tx() as conn:
@@ -955,6 +958,8 @@ def _backfill_loop() -> None:
                         http.close()
                     http = fetcher.Http()
                 worked = backfill_batch(http)
+                if not worked and gapfill.plan_round():   # Historie abgearbeitet: Lücken weiter schließen
+                    worked = 1
         except Exception:
             log.exception("Fehler im Backfill")
             STATUS["backfill"] = None

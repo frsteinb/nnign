@@ -122,7 +122,17 @@ stammen nur aus dem Historie-Abruf und sind deshalb lückenhafter:</p>
   <li><strong>Archivseiten</strong> (z. B. SPIEGEL, tagesschau, ZEIT, heise) sind am vollständigsten – sofern sie erreichbar
     sind und die Artikel-Links erkannt werden.</li>
 </ul>
-<p>Der Streifen unter den Jahren im Zeitstrahl zeigt die Datenlage je Jahr relativ zu den am besten erfassten Jahren:
+<h4 id="lueckenschluss">Fortlaufender Lückenschluss</h4>
+<p>Ist der Historie-Abruf abgearbeitet, macht nnign von selbst weiter: Es vergleicht jeden Monat mit der Meldungsdichte
+  der letzten drei vollständigen Monate (der „aktuellen Lage“) und plant für die am dünnsten erfassten Monate weitere
+  Abrufe ein – zuerst erneute Versuche fehlgeschlagener Abrufe, dann weitere Wayback-Schnappschüsse (höchstens zwei Tage
+  Abstand), dann die Nachrichtensuche mit den Einzelbegriffen der Suchanfrage in Wochenfenstern. Ein Monat ist fertig, wenn er
+  {{ cfg('gapfill_target_percent') }} % des Zielniveaus erreicht oder alle Wege ausgeschöpft sind (erneute Prüfung nach 30 Tagen).
+  Im Admin-Status zeigt die Zeile „Lückenschluss“ den Fortschritt, die dünnsten Monate sowie die geschätzte Restdauer und den
+  zu erwartenden Datenverkehr. Beides beruht auf Messwerten der letzten Abrufe (Sekunden und Bytes je Abruf, neue Meldungen
+  je Abruf) und wird laufend genauer; die Zahl der Abrufe ist eine Obergrenze. Ältere Jahre erreichen das Niveau oft nicht
+  ganz, weil damals weniger online erschien und nicht alles archiviert ist.</p>
+<p>Der Streifen unter den Jahren im Zeitstrahl zeigt die Datenlage je Jahr relativ zum Zielniveau der aktuellen Lage (solange es noch keins gibt: relativ zu den am besten erfassten Jahren):
 <span class="covkey"><span class="cov gut"></span>gut <span class="cov mittel"></span>mittel <span class="cov dünn"></span>dünn</span>;
 gestrichelt umrandet = der Historie-Abruf ergänzt dieses Jahr noch. In dünn erfassten Jahren sind Zahlen und Anteile
 eher Stichproben.</p>
