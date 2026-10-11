@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/static/style.css?v={{ version }}">
 </head>
 <body>
-<header class="top">
+<header class="top" id="top">
   <a class="brand" href="/">nnign <span class="tagline">No News Is Good News · VW-Konzern im Spiegel der Medien</span></a>
   <nav>
     <a href="/">Themen</a>
@@ -21,6 +21,23 @@
 {% block content %}{% endblock %}
 </main>
 <footer>nnign {{ version }} · Hobbyprojekt ohne Verbindung zur Volkswagen AG · Bewertungen sind automatisch erzeugt, beruhen auf <a href="/doku#annahmen">offengelegten Annahmen</a> und können irren – bitte eigene Überlegungen anstellen und die Originalartikel lesen.</footer>
+<a href="#top" class="to-top" id="to-top" aria-label="Zum Seitenanfang" title="Zum Seitenanfang">
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5l-7 7m7-7l7 7M12 5v14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</a>
+<script>
+(function () {
+  var btn = document.getElementById('to-top');
+  var update = function () { btn.classList.toggle('show', window.scrollY > 600); };
+  window.addEventListener('scroll', update, {passive: true});
+  update();
+  btn.addEventListener('click', function (e) {
+    e.preventDefault();
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({top: 0, behavior: reduce ? 'auto' : 'smooth'});
+    document.querySelector('.brand').focus({preventScroll: true});
+  });
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
