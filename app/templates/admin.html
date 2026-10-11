@@ -185,7 +185,7 @@
           {% elif s.type == 'text' %}
             <textarea id="f-{{ s.key }}" name="{{ s.key }}" rows="{{ 14 if s.key == 'llm_instructions' else 5 }}" class="prompt">{{ it.value }}</textarea>
           {% elif s.type == 'choice' %}
-            <select id="f-{{ s.key }}" name="{{ s.key }}">{% for c in s.choices %}<option {{ 'selected' if c == it.value }}>{{ c }}</option>{% endfor %}</select>
+            <select id="f-{{ s.key }}" name="{{ s.key }}">{% for c in s.choices %}<option value="{{ c }}" {{ 'selected' if c == it.value }}>{{ c or '– keiner –' }}</option>{% endfor %}</select>
           {% elif s.type == 'secret' %}
             <div class="secret-state" id="f-{{ s.key }}">{% if it.value %}<span class="ok">gesetzt</span> <code>{{ it.value }}</code>
               {% else %}<span class="muted">nicht gesetzt</span>{% endif %} · nur in <code>.env</code>: <code>{{ it.env }}=…</code></div>

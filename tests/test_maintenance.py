@@ -218,3 +218,42 @@ def test_list_models(env):
     _openai_mock(env, lambda b: _answer(GOOD))
     config.set("llm_provider", "gemini")
     assert llm.list_models() == (["embedding-1", "gemini-x-flash"], "")
+
+
+def test_fallback_provider_takes_over_on_limit(env):
+    from app import config, llm, maintenance
+    _setup(env)
+    primary = _openai_mock(env, lambda b: (429, {"error": "limit"}))
+    fb_calls = []
+
+    def fb(body, headers):
+        fb_calls.append(body)
+        return _answer(GOOD)
+    env.post_routes["/fb/v1/chat/completions"] = fb
+    config.set("llm_fallback_provider", "groq")
+    config.set("llm_fallback_model", "gpt-oss-test")
+    config.set("llm_fallback_base_url", env.base + "/fb/v1")
+    os.environ["GROQ_API_KEY"] = "gsk_test"
+    assert llm.fallback_configured() and "Ausweich: groq" in llm.describe()
+    r1 = llm.analyze({"title": "VW", "summary": "", "source": "x", "published": ""}, [])
+    assert r1 is None and len(primary) == 1 and llm.pause_info("primary")[0]   # Haupt-Anbieter pausiert
+    r2 = llm.analyze({"title": "VW", "summary": "", "source": "x", "published": ""}, [])
+    assert r2 and r2["sentiment"] == "negativ" and len(fb_calls) == 1 and len(primary) == 1
+    assert fb_calls[0]["model"] == "gpt-oss-test"
+    assert llm.ready() and llm.blocked_reason() == ""
+    t = llm.test_connection()
+    assert "Haupt-Anbieter: pausiert" in t and "Ausweich-Anbieter: OK" in t
+    assert maintenance.rerate_batch() >= 1 and len(primary) == 1           # Nachbewertung über Ausweich
+
+
+def test_zeroshot_covers_while_llm_paused(env):
+    from app import config, llm, maintenance
+    from tests.test_classify import _zs_server, _scores
+    _setup(env)
+    _openai_mock(env, lambda b: _answer(GOOD))
+    _zs_server(env, lambda b: _scores(b, "gut", 0.9))
+    os.environ["HF_TOKEN"] = "hf"
+    assert not maintenance.zeroshot_active()                 # KI arbeitet -> kein Zero-Shot
+    llm.pause(600, "Rate-Limit des Anbieters")
+    assert maintenance.zeroshot_active() and maintenance.zeroshot_batch() >= 1
+    config.set("sentiment_engine", "auto")

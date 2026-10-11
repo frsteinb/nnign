@@ -491,9 +491,10 @@ def _apply_rating(t, res: dict) -> None:
 # ---------------------------------------------------------------------------------- Zero-Shot im Hintergrund
 
 def zeroshot_active() -> bool:
-    """Zero-Shot bewertet, wenn ausdrücklich gewählt – oder bei auto, solange keine KI eingerichtet ist."""
+    """Zero-Shot bewertet, wenn ausdrücklich gewählt – oder bei auto, solange keine KI arbeiten kann."""
     e = classify.engine()
-    return classify.zs_configured() and (e == "zeroshot" or (e == "auto" and not llm.available()))
+    # bei „auto“ auch, solange die KI pausiert (Limit/Störung) – die KI bewertet später ohnehin nach
+    return classify.zs_configured() and (e == "zeroshot" or (e == "auto" and not llm.ready()))
 
 
 def _zs_where() -> tuple[str, tuple]:

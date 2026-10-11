@@ -88,20 +88,53 @@ PROVIDERS: dict[str, Provider] = {
 }
 
 
+# Zwei Plätze: „primary“ (eingestellter Anbieter) und „fallback“ (Ausweich-Anbieter, springt ein, wenn der
+# erste ein Limit erreicht hat oder gestört ist). Welcher Platz gerade gilt, steht je Thread in _slot.
+_slot = threading.local()
+
+
+def current_slot() -> str:
+    return getattr(_slot, "name", "primary")
+
+
+class _Using:
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.prev = current_slot()
+        _slot.name = self.name
+
+    def __exit__(self, *a):
+        _slot.name = self.prev
+
+
+def using(slot: str) -> _Using:
+    return _Using(slot)
+
+
 def provider_name() -> str:
+    if current_slot() == "fallback":
+        name = config.get("llm_fallback_provider")
+        return name if name in PROVIDERS else ""
     name = config.get("llm_provider")
     return name if name in PROVIDERS else "anthropic"
 
 
 def model() -> str:
+    if current_slot() == "fallback":
+        name = provider_name()
+        return (config.get("llm_fallback_model") or "").strip() or (PROVIDERS[name].default_model if name else "")
     return (config.get("llm_model") or "").strip() or PROVIDERS[provider_name()].default_model
 
 
 def api_key() -> str:
-    key = (config.get("llm_api_key") or "").strip()
+    key = (config.get("llm_api_key") or "").strip() if current_slot() == "primary" else ""
     if key:
         return key
     name = provider_name()
+    if not name:
+        return ""
     if name == "anthropic":
         return (config.get("anthropic_api_key") or "").strip()
     for env in PROVIDERS[name].key_env:
@@ -111,8 +144,10 @@ def api_key() -> str:
 
 
 def base_url() -> str:
-    url = (config.get("llm_base_url") or "").strip()
+    url = (config.get("llm_base_url" if current_slot() == "primary" else "llm_fallback_base_url") or "").strip()
     name = provider_name()
+    if not name:
+        return ""
     if not url and name == "azure":
         url = os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
     if not url and name == "ollama" and os.environ.get("OLLAMA_HOST", "").strip():
@@ -122,10 +157,12 @@ def base_url() -> str:
 
 
 def missing() -> str:
-    """Leer, wenn die KI nutzbar ist; sonst der Grund."""
+    """Leer, wenn die KI (im aktuellen Platz) nutzbar ist; sonst der Grund."""
     if not config.get("llm_enabled"):
         return "deaktiviert"
     name = provider_name()
+    if not name:
+        return "kein Ausweich-Anbieter gewählt"
     if not model():
         return f"kein Modell gesetzt (LLM_MODEL) für Anbieter {name}"
     if PROVIDERS[name].needs_key and not api_key():
@@ -136,14 +173,27 @@ def missing() -> str:
 
 
 def available() -> bool:
-    return not missing()
+    """Eingerichtet (Haupt- oder Ausweich-Anbieter)."""
+    if not missing():
+        return True
+    with using("fallback"):
+        return not missing()
+
+
+def fallback_configured() -> bool:
+    with using("fallback"):
+        return not missing()
 
 
 def describe() -> str:
     reason = missing()
+    fb = ""
+    if fallback_configured():
+        with using("fallback"):
+            fb = f" · Ausweich: {provider_name()} · {model()}"
     if reason:
-        return f"inaktiv ({reason}) – regelbasiert"
-    return f"aktiv: {provider_name()} · {model()}"
+        return f"inaktiv ({reason}) – regelbasiert" + fb
+    return f"aktiv: {provider_name()} · {model()}" + fb
 
 
 # ====================================================================== Kostenbremse
@@ -174,6 +224,15 @@ def budget_left() -> int:
 # Meldungen, die in der Pause eingehen, werden später automatisch von der KI nachbewertet.
 
 _pause = {"until": 0.0, "reason": "", "fails": 0}
+_pauses = {"primary": _pause, "fallback": {"until": 0.0, "reason": "", "fails": 0}}
+
+
+def _p() -> dict:
+    return _pauses[current_slot()]
+
+
+def _pause_key() -> str:
+    return "llm_pause" if current_slot() == "primary" else "llm_pause_fallback"
 
 
 class _LastProblem(logging.Handler):
@@ -196,37 +255,69 @@ log.addHandler(last_problem)
 
 
 def pause(seconds: float, reason: str) -> None:
-    _pause["until"] = time.time() + max(1.0, seconds)
-    _pause["reason"] = reason
-    config.state_set("llm_pause", {"until": _pause["until"], "reason": reason})
-    log.warning("KI pausiert für %d s: %s", seconds, reason)
+    p = _p()
+    p["until"] = time.time() + max(1.0, seconds)
+    p["reason"] = reason
+    config.state_set(_pause_key(), {"until": p["until"], "reason": reason})
+    log.warning("KI (%s) pausiert für %d s: %s", provider_name(), seconds, reason)
 
 
 def _limit_hit(retry_after: str | None = None, reason: str = "Rate-Limit des Anbieters") -> None:
-    _pause["fails"] += 1
+    p = _p()
+    p["fails"] += 1
     try:
         secs = float(retry_after) if retry_after else 0.0
     except ValueError:
         secs = 0.0
-    pause(secs or min(3600.0, 60.0 * 2 ** (_pause["fails"] - 1)), reason)
+    pause(secs or min(3600.0, 60.0 * 2 ** (p["fails"] - 1)), reason)
 
 
 def _ok() -> None:
-    if _pause["fails"] or _pause["until"]:
-        _pause.update(until=0.0, reason="", fails=0)
-        config.state_set("llm_pause", None)
+    p = _p()
+    if p["fails"] or p["until"]:
+        p.update(until=0.0, reason="", fails=0)
+        config.state_set(_pause_key(), None)
+    last_problem.msg = ""
+    now = time.time()
+    if now - _last_ok.get("t", 0) > 60:
+        _last_ok["t"] = now
+        config.state_set("llm_last_ok", db_utcnow())
+
+
+_last_ok: dict = {}
+
+
+def db_utcnow() -> str:
+    from . import db
+    return db.utcnow()
 
 
 def paused_until() -> float:
-    if not _pause["until"]:
-        stored = config.state_get("llm_pause") or {}
-        _pause["until"], _pause["reason"] = float(stored.get("until") or 0), stored.get("reason", "")
-    return _pause["until"] if _pause["until"] > time.time() else 0.0
+    p = _p()
+    if not p["until"]:
+        stored = config.state_get(_pause_key()) or {}
+        p["until"], p["reason"] = float(stored.get("until") or 0), stored.get("reason", "")
+    return p["until"] if p["until"] > time.time() else 0.0
+
+
+def _slot_ready() -> bool:
+    return not missing() and not paused_until()
+
+
+def choose_slot() -> str | None:
+    """Welcher Anbieter jetzt arbeiten kann: Haupt-Anbieter, sonst Ausweich-Anbieter, sonst keiner."""
+    if not _budget_ok():
+        return None
+    for slot in ("primary", "fallback"):
+        with using(slot):
+            if _slot_ready():
+                return slot
+    return None
 
 
 def ready() -> bool:
-    """Eingerichtet, Tageslimit nicht erreicht und nicht pausiert."""
-    return available() and _budget_ok() and not paused_until()
+    """Eingerichtet, Tageslimit nicht erreicht und (Haupt- oder Ausweich-Anbieter) nicht pausiert."""
+    return choose_slot() is not None
 
 
 def blocked_reason() -> str:
@@ -235,10 +326,23 @@ def blocked_reason() -> str:
         return ""
     if not _budget_ok():
         return "Tageslimit erreicht – weiter ab Mitternacht (UTC)"
-    until = paused_until()
+    if choose_slot():
+        return ""
+    until = paused_until() if not missing() else 0.0
     if until:
         return f"pausiert bis {datetime.fromtimestamp(until, timezone.utc).strftime('%H:%M')} UTC ({_pause['reason']})"
+    with using("fallback"):
+        fu = paused_until() if not missing() else 0.0
+        reason = _p()["reason"]
+    if fu:
+        return f"pausiert bis {datetime.fromtimestamp(fu, timezone.utc).strftime('%H:%M')} UTC ({reason})"
     return ""
+
+
+def pause_info(slot: str = "primary") -> tuple[float, str]:
+    with using(slot):
+        until = paused_until()
+        return until, _p()["reason"]
 
 
 # ====================================================================== Anthropic
@@ -428,6 +532,15 @@ def build_user_message(article: dict, candidates: list[dict]) -> str:
 
 
 def analyze(article: dict, candidates: list[dict]) -> dict | None:
+    """Mit dem Haupt-Anbieter oder – bei Limit/Störung – dem Ausweich-Anbieter."""
+    slot = choose_slot()
+    if slot is None:
+        return None
+    with using(slot):
+        return _analyze(article, candidates)
+
+
+def _analyze(article: dict, candidates: list[dict]) -> dict | None:
     """article: title, summary, source, published. candidates: id, title, abstract, first, last."""
     if not ready():
         return None
@@ -464,6 +577,15 @@ def fingerprint() -> str:
 
 
 def rate_topic(topic: dict, articles: list[dict]) -> dict | None:
+    """Mit dem Haupt-Anbieter oder – bei Limit/Störung – dem Ausweich-Anbieter."""
+    slot = choose_slot()
+    if slot is None:
+        return None
+    with using(slot):
+        return _rate_topic(topic, articles)
+
+
+def _rate_topic(topic: dict, articles: list[dict]) -> dict | None:
     """Ein ganzes Thema nachträglich bewerten (Titel, Abstract, Tonalität), z. B. wenn die KI erst später
     verfügbar war, ein Limit erreicht war oder das Thema stark gewachsen ist. Ein Aufruf je Thema."""
     if not ready():
@@ -500,6 +622,15 @@ TRANSLATE_SCHEMA = {
 
 
 def translate(texts: list[str], source_lang: str) -> list[str] | None:
+    """Mit dem Haupt-Anbieter oder – bei Limit/Störung – dem Ausweich-Anbieter."""
+    slot = choose_slot()
+    if slot is None:
+        return None
+    with using(slot):
+        return _translate(texts, source_lang)
+
+
+def _translate(texts: list[str], source_lang: str) -> list[str] | None:
     """Übersetzt eine Liste kurzer Texte ins Deutsche (ein Aufruf für alle). None bei Fehlern."""
     if not ready() or not texts:
         return None
@@ -542,17 +673,29 @@ def list_models() -> tuple[list[str], str]:
     return sorted(i for i in ids if i), ""
 
 
-def test_connection() -> str:
-    """Für den Admin-Button: kleiner Testaufruf."""
+def _test_slot() -> str:
     reason = missing()
     if reason:
-        return f"Nicht nutzbar: {reason}."
-    blocked = blocked_reason()
-    if blocked:
-        return f"Derzeit nicht nutzbar: {blocked}."
+        return f"nicht nutzbar: {reason}"
+    if not _budget_ok():
+        return "Tageslimit erreicht – weiter ab Mitternacht (UTC)"
+    until, why = paused_until(), _p()["reason"]
+    if until:
+        return (f"pausiert bis {datetime.fromtimestamp(until, timezone.utc).strftime('%H:%M')} UTC ({why}) – "
+                "danach automatisch weiter")
     last_problem.msg = ""
-    res = analyze({"title": "Volkswagen meldet Rekordabsatz bei Elektroautos", "summary": "",
-                   "source": "Test", "published": datetime.now(timezone.utc).isoformat()}, [])
+    res = _analyze({"title": "Volkswagen meldet Rekordabsatz bei Elektroautos", "summary": "",
+                    "source": "Test", "published": datetime.now(timezone.utc).isoformat()}, [])
     if res is None:
         return f"Fehlgeschlagen ({provider_name()} · {model()}): {last_problem.msg or 'keine verwertbare Antwort'}"
     return f"OK ({provider_name()} · {model()}): {res.get('sentiment')} – {res.get('topic_title')}"
+
+
+def test_connection() -> str:
+    """Für den Admin-Button: kleiner Testaufruf beim Haupt- und ggf. beim Ausweich-Anbieter."""
+    main = _test_slot()
+    if not fallback_configured():
+        return main[0].upper() + main[1:] if main.startswith("nicht") else main
+    with using("fallback"):
+        fb = _test_slot()
+    return f"Haupt-Anbieter: {main} · Ausweich-Anbieter: {fb}"
