@@ -2,6 +2,7 @@
 {% block content %}
 {% set st = status %}
 {% set sx = stats %}
+{% if is_admin(request) %}{% if msg and not select %}<div class="flash">{{ msg }}</div>{% endif %}{% include "_suggestions.html" %}{% endif %}
 <section class="activity" id="activity" aria-live="polite" data-topics="{{ status.topics }}">
 {% include "_activity.html" %}
 </section>

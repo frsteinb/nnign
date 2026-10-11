@@ -89,6 +89,9 @@ def env(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     from app import llm as _llm
     _llm._format_level.clear()
+    _llm._pause.update(until=0.0, reason="", fails=0)
+    from app import translate as _tr
+    _tr._pause.update(until=0.0, reason="")
     monkeypatch.setenv("NNIGN_GNEWS_BASE", f"http://localhost:{mock.port}/gnews")
     monkeypatch.setenv("NNIGN_WAYBACK_BASE", mock.base)
     from app import db, fetcher

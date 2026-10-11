@@ -170,6 +170,10 @@ def query_one(sql: str, params=()):
 
 # Spalten, die nach der ersten Version hinzugekommen sind (für bestehende Datenbanken)
 MIGRATIONS = [
+    ("articles", "llm_state", "TEXT NOT NULL DEFAULT ''"),       # '' | pending (KI fehlte/Limit) | done
+    ("topics", "llm_rated_at", "TEXT NOT NULL DEFAULT ''"),
+    ("topics", "llm_rated_count", "INTEGER NOT NULL DEFAULT 0"),  # Meldungen zum Zeitpunkt der KI-Bewertung
+    ("topics", "llm_fp", "TEXT NOT NULL DEFAULT ''"),             # Anbieter/Modell/Prompt der KI-Bewertung
     ("topics", "manual_group", "INTEGER NOT NULL DEFAULT 0"),   # vom Admin zusammengeführt -> bleibt zusammen
     ("topics", "title_fixed", "INTEGER NOT NULL DEFAULT 0"),    # Titel vom Admin gesetzt
     ("topics", "sentiment_detail", "TEXT NOT NULL DEFAULT '{}'"),

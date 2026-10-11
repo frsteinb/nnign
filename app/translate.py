@@ -12,6 +12,7 @@ Titel und Teaser werden beim Speichern übersetzt; das Original bleibt erhalten.
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
 
@@ -20,6 +21,29 @@ from . import config, llm
 log = logging.getLogger(__name__)
 
 NAMES = {"libretranslate": "LibreTranslate", "deepl": "DeepL", "llm": "KI", "": ""}
+
+# Bei Limits (HTTP 429, DeepL 456 = Kontingent erschöpft) kurz pausieren und danach selbst weitermachen
+_pause = {"until": 0.0, "reason": ""}
+
+
+def _limit(resp, name: str) -> bool:
+    """True, wenn die Antwort ein Limit meldet (dann pausieren)."""
+    if resp.status_code == 456:
+        _pause.update(until=time.time() + 6 * 3600, reason=f"{name}: Kontingent erschöpft")
+    elif resp.status_code == 429:
+        try:
+            secs = float(resp.headers.get("retry-after") or 600)
+        except ValueError:
+            secs = 600.0
+        _pause.update(until=time.time() + secs, reason=f"{name}: Rate-Limit")
+    else:
+        return False
+    log.warning("Übersetzung pausiert: %s", _pause["reason"])
+    return True
+
+
+def paused_reason() -> str:
+    return _pause["reason"] if _pause["until"] > time.time() else ""
 
 
 def provider() -> str:
@@ -42,6 +66,8 @@ def provider() -> str:
 
 def describe() -> str:
     p = provider()
+    if p and paused_reason():
+        return f"aktiv: {NAMES[p]} – pausiert ({paused_reason()}), danach automatisch weiter"
     if p:
         return f"aktiv: {NAMES[p]}"
     if config.get("translate_provider") == "none":
@@ -68,6 +94,8 @@ def _libretranslate(texts: list[str], lang: str) -> list[str] | None:
             return None
         if resp.status_code == 400 and source != "auto":
             continue  # Sprachcode unbekannt -> automatische Erkennung
+        if _limit(resp, "LibreTranslate"):
+            return None
         if resp.status_code >= 400:
             log.warning("LibreTranslate: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -93,6 +121,8 @@ def _deepl(texts: list[str], lang: str) -> list[str] | None:
     except httpx.HTTPError as exc:
         log.warning("DeepL nicht erreichbar: %s", exc)
         return None
+    if _limit(resp, "DeepL"):
+        return None
     if resp.status_code >= 400:
         log.warning("DeepL: HTTP %s %s", resp.status_code, resp.text[:200])
         return None
@@ -103,7 +133,7 @@ def _deepl(texts: list[str], lang: str) -> list[str] | None:
 def translate_texts(texts: list[str], lang: str) -> tuple[list[str] | None, str]:
     """Übersetzt Texte aus `lang` ins Deutsche. Rückgabe: (Übersetzungen oder None, Anbieter)."""
     p = provider()
-    if not p or not texts:
+    if not p or not texts or paused_reason():
         return None, ""
     out = {"libretranslate": _libretranslate, "deepl": _deepl, "llm": llm.translate}[p](texts, lang)
     return out, (p if out is not None else "")

@@ -234,6 +234,9 @@ SETTINGS: list[Setting] = [
             "Achtung: bei 25 Jahren Historie viele tausend Aufrufe.", "KI"),
     Setting("llm_max_calls_per_day", "int", 1500, "Max. KI-Aufrufe pro Tag",
             "Kostenbremse; danach regelbasiert.", "KI"),
+    Setting("llm_rerate_share", "float", 0.5, "Anteil des Tageslimits für Nachbewertungen",
+            "Nachträgliche KI-Bewertungen (nach Limits/Ausfällen, für gewachsene oder ältere Themen) nutzen höchstens "
+            "diesen Anteil (0..1) des Tageslimits; der Rest bleibt für neue Meldungen.", "KI"),
     # --- Übersetzung
     Setting("translate_provider", "choice", "auto", "Übersetzer für englische/chinesische Meldungen",
             "auto = erster verfügbarer: LibreTranslate (wenn URL gesetzt), DeepL (wenn Key gesetzt), KI-Anbieter. "

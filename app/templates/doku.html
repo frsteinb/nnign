@@ -28,7 +28,7 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
     <li><a href="#bewertung">Bewertung positiv / neutral / negativ</a> – mit <a href="#annahmen">Kriterien und Annahmen</a></li>
     <li><a href="#ki">KI-Analyse und Prompt</a></li>
     <li><a href="#statistik">Statistik</a></li>
-    <li><a href="#daten">Datenverwaltung im Admin-Bereich</a></li>
+    <li><a href="#daten">Datenverwaltung im Admin-Bereich</a> – mit <a href="#selbstpflege">Selbstpflege</a></li>
     <li><a href="#einstellungen">Alle Einstellungen</a></li>
     <li><a href="#api">Schnittstellen</a></li>
     <li><a href="#grenzen">Grenzen und Hinweise</a></li>
@@ -414,6 +414,38 @@ füllen muss.</p>
 negative nach unten. Solange der Historie-Abruf läuft, ist die Historie unvollständig; die Anteile sind dann eine Stichprobe.</p>
 
 <h2 id="daten">10. Datenverwaltung im Admin-Bereich</h2>
+<h3 id="selbstpflege">Selbstpflege: Änderungen werden automatisch berücksichtigt</h3>
+<p>nnign prüft laufend (etwa jede Minute und bei jedem Start), ob sich Grundlagen geändert haben – Einstellungen,
+Bewertungsregeln, Quellen, Erfassungszeitraum, Übersetzer oder KI-Anbindung, egal ob im Admin-Bereich, per
+Umgebungsvariable oder durch ein neues Image.</p>
+<table><thead><tr><th>Änderung</th><th>Was passiert</th></tr></thead><tbody>
+  <tr><td>Bewertungsregeln, Neutral-Marge, eigene Begriffe</td><td>automatisch: alle Bewertungen neu berechnen (Sekunden)</td></tr>
+  <tr><td>Schwelle, Zeitfenster oder Verfahren der Themenbildung</td><td>automatisch neu bündeln, wenn es voraussichtlich
+    unter drei Minuten dauert; sonst Vorschlag mit geschätzter Dauer</td></tr>
+  <tr><td>neue oder geänderte Quelle</td><td>automatisch: aktuellen Zeitraum nachholen, Historie einplanen</td></tr>
+  <tr><td>Erfassungszeitraum (auch per Umgebungsvariable)</td><td>automatisch: Abrufe einplanen bzw. stoppen (gelöscht wird nichts)</td></tr>
+  <tr><td>Übersetzer wird verfügbar</td><td>automatisch: fremdsprachige Meldungen nachübersetzen</td></tr>
+  <tr><td>KI wird verfügbar</td><td>automatisch: Themen der letzten 30 Tage nachbewerten; ältere als Vorschlag mit Zahl der
+    KI-Aufrufe und Dauer beim aktuellen Tageslimit</td></tr>
+  <tr><td>anderes KI-Modell oder geänderter Prompt</td><td>bis 30 betroffene Themen automatisch, sonst Vorschlag</td></tr>
+  <tr><td>Relevanzbegriffe</td><td>Vorschlag: nicht mehr passende Meldungen ausblenden; Vorschlag: Historie erneut auswerten</td></tr>
+  <tr><td>Suchbegriffe</td><td>aktuelle Scans nutzen sie sofort; Vorschlag: Historie mit den neuen Begriffen durchsuchen</td></tr>
+</tbody></table>
+<p>Vorschläge erscheinen für den angemeldeten Admin oben auf der Startseite und im Admin-Bereich, jeweils mit
+Aufwandsschätzung, „Ausführen“ und „Nicht jetzt“ (dann gilt der aktuelle Stand als akzeptiert). Was automatisch
+geschah, steht unter <a href="/admin#laeufe">Letzte Scans</a> als Lauf „aktualisierung“.</p>
+<p><strong>Limits und Störungen:</strong> Meldet ein KI-Anbieter oder Übersetzer ein Limit (HTTP 429, „überlastet“,
+DeepL-Kontingent), pausiert nnign den Dienst – so lange, wie der Anbieter angibt, sonst 1, 2, 4 … höchstens 60
+Minuten, bei erschöpftem Tageslimit bis Mitternacht (UTC) – und macht danach selbst weiter. Meldungen, die in der Pause
+eingehen, werden zunächst regelbasiert bewertet und anschließend automatisch von der KI nachbewertet; ebenso Themen,
+die seit ihrer KI-Bewertung auf mindestens das Doppelte gewachsen sind. Nachbewertungen nutzen höchstens
+{{ (cfg('llm_rerate_share') * 100)|round|int }} % des Tageslimits, damit neue Meldungen Vorrang haben. Die Startseite
+zeigt, wenn die KI pausiert und wie viele Themen auf sie warten.</p>
+<h3 id="anmeldung">Anmeldung</h3>
+<p>Der Admin meldet sich über das Anmeldeformular an. Die Anmeldung bleibt auf einem Gerät sechs Monate ab der
+letzten Nutzung erhalten, auf höchstens fünf Geräten gleichzeitig; bei einer weiteren Anmeldung endet die am längsten
+unbenutzte. Geräte lassen sich im Admin-Bereich einzeln abmelden; ein neues Passwort meldet alle anderen Geräte ab.
+Skripte können weiterhin HTTP-Basic-Auth verwenden.</p>
 <table><tbody>
   <tr><td>Zeitraum ändern</td><td>„von“/„bis“ setzen. Früheres „von“ plant den Abruf der zusätzlichen Historie ein,
     späteres stoppt offene Abrufe davor. Optional werden vorhandene Daten außerhalb gelöscht.</td></tr>

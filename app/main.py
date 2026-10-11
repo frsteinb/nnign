@@ -21,14 +21,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, db, llm, pipeline, prompts, sentiment, sources, topics, translate
+from . import auth, config, db, llm, maintenance, pipeline, prompts, sentiment, sources, topics, translate
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -120,6 +120,7 @@ async def lifespan(app: FastAPI):
     changes = sources.seed_sources()
     pipeline.ensure_default_period()
     pipeline.upgrade_on_start(changes)
+    maintenance.check(startup=True)
     init_admin_password()
     if os.environ.get("NNIGN_DISABLE_SCHEDULER") != "1":
         pipeline.start_background()
@@ -149,6 +150,7 @@ templates.env.filters["dt"] = fmt_dt
 templates.env.filters["d"] = lambda v: fmt_dt(v, "%d.%m.%Y")
 templates.env.globals["version"] = VERSION
 templates.env.globals["is_admin"] = lambda request: is_admin(request)
+templates.env.globals["suggestions"] = lambda: maintenance.suggestions()
 templates.env.globals["symbol"] = {"positiv": "▲", "neutral": "●", "negativ": "▼"}
 templates.env.globals["languages"] = sources.LANGUAGES
 templates.env.globals["lang_short"] = {"en": "EN", "zh": "ZH"}
@@ -389,6 +391,20 @@ def activity() -> list[dict]:
                     "phase": "verbessertes Verfahren der Themenbildung" if not rg.get("total") else
                     f"{rg.get('done', 0)} von {rg['total']} Meldungen neu zugeordnet",
                     "detail": "", "pct": _pct(rg.get("done", 0), rg["total"]) if rg.get("total") else None})
+    if llm.available():
+        rr = maintenance.STATUS.get("rerate")
+        open_n = maintenance.rerate_open()
+        blocked = llm.blocked_reason()
+        if rr:
+            out.append({"kind": "rerate", "title": "KI-Nachbewertung", "phase": f"„{rr['title']}“",
+                        "detail": f"noch {open_n} Themen", "pct": None})
+        elif open_n and blocked:
+            out.append({"kind": "wait", "title": "KI pausiert", "phase": blocked,
+                        "detail": f"{open_n} Themen werden danach automatisch von der KI bewertet", "pct": None})
+        elif open_n and not maintenance._share_ok():
+            out.append({"kind": "wait", "title": "KI-Nachbewertung wartet",
+                        "phase": "Anteil des Tageslimits für Nachbewertungen ausgeschöpft – weiter ab Mitternacht (UTC)",
+                        "detail": f"{open_n} Themen offen", "pct": None})
     if st.get("translate"):
         out.append({"kind": "translate", "title": "Nachübersetzung",
                     "phase": f"{st['translate']['n']} fremdsprachige Meldungen", "detail": "", "pct": None})
@@ -790,6 +806,25 @@ def admin_reclassify(_=Depends(require_admin)):
     threading.Thread(target=pipeline.reclassify, name="reclassify", daemon=True).start()
     return back("Bewertungen werden neu berechnet (Regeln; KI- und manuell bewertete Themen bleiben). "
                 "Dauer: Sekunden bis wenige Minuten.")
+
+
+@app.post("/admin/suggestions/{sid}/run")
+def admin_suggestion_run(sid: str, request: Request, _=Depends(require_admin)):
+    msg = maintenance.run_suggestion(sid)
+    return _back_to(request, msg)
+
+
+@app.post("/admin/suggestions/{sid}/dismiss")
+def admin_suggestion_dismiss(sid: str, request: Request, _=Depends(require_admin)):
+    maintenance.dismiss(sid)
+    return _back_to(request, "Vorschlag ausgeblendet")
+
+
+def _back_to(request: Request, msg: str) -> RedirectResponse:
+    ref = request.headers.get("referer") or ""
+    if urlsplit(ref).path == "/":
+        return RedirectResponse("/?" + urlencode({"msg": msg}), status_code=303)
+    return back(msg)
 
 
 @app.post("/admin/regroup")

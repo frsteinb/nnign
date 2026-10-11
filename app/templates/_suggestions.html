@@ -1,0 +1,17 @@
+{% set sugs = suggestions() %}
+{% if sugs %}
+<section class="card suggestions" id="vorschlaege" aria-label="Vorschläge">
+  <h2>Vorschläge zur Aktualisierung des Datenbestands</h2>
+  <p class="muted small">Grundlagen haben sich geändert. Kleine Anpassungen erledigt nnign selbst; diese hier sind aufwendiger und warten auf Ihre Bestätigung.</p>
+  {% for s in sugs %}
+  <div class="sug">
+    <div class="sug-text"><strong>{{ s.title }}</strong><div class="small">{{ s.text }}</div>
+      <div class="small muted">Aufwand: {{ s.estimate }}</div></div>
+    <div class="sug-actions">
+      <form method="post" action="/admin/suggestions/{{ s.id }}/run"><button>Ausführen</button></form>
+      <form method="post" action="/admin/suggestions/{{ s.id }}/dismiss"><button class="link">Nicht jetzt</button></form>
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}

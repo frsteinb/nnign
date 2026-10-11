@@ -142,7 +142,9 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
             best_sim, best_row = matches[0] if matches else (0.0, None)
 
             res = None
+            llm_state = ""
             if use_llm and best_sim < 0.6:
+                llm_state = "pending"      # wird nachgeholt, falls die KI gerade nicht kann (Limit, Störung)
                 cands = [{"id": r["id"], "title": r["title"], "abstract": r["abstract"],
                           "first": r["first_published_at"], "last": r["last_published_at"]}
                          for sim, r in matches if sim >= 0.08]
@@ -150,6 +152,7 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                                    "published": pub}, cands)
                 if res is not None:
                     ctx.llm_calls += 1
+                    llm_state = "done"
 
             with db.tx() as conn:
                 topic_id = None
@@ -166,6 +169,8 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                             res["sentiment"], art_score, "llm", pub, vec,
                             {"llm": res.get("begruendung", ""), "confidence": res.get("confidence"),
                              "model": llm.describe(), **art_detail})
+                        conn.execute("UPDATE topics SET llm_rated_at=?, llm_rated_count=1, llm_fp=? WHERE id=?",
+                                     (db.utcnow(), llm.fingerprint(), topic_id))
                         ctx.new_topics += 1
                 else:
                     topic_id = _heuristic_topic(conn, it, vec, pub, senti, best_sim, best_row,
@@ -174,10 +179,12 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                 conn.execute(
                     "INSERT OR IGNORE INTO articles(url, title, title_key, summary, source_name, source_domain, "
                     "published_at, fetched_at, via, relevant, sentiment_score, sentiment_detail, topic_id, "
-                    "lang, title_orig, summary_orig, translated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "lang, title_orig, summary_orig, translated_by, llm_state) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (it.url, it.title, tkey, it.summary, it.source_name, it.source_domain, pub, db.utcnow(),
                      it.via, relevant, art_score, json.dumps(art_detail, ensure_ascii=False),
-                     topic_id if relevant else None, it.lang, it.title_orig, it.summary_orig, it.translated_by))
+                     topic_id if relevant else None, it.lang, it.title_orig, it.summary_orig, it.translated_by,
+                     llm_state))
                 if relevant:
                     idf.add_document(vec.keys())
                     ctx.new_articles += 1
@@ -500,6 +507,19 @@ def apply_period(since: date, until: date | None, purge: bool = False) -> dict:
     optional Daten außerhalb löschen."""
     config.set("collect_since", since.isoformat())
     config.set("collect_until", until.isoformat() if until else "")
+    res = sync_period()
+    deleted = {"articles": 0, "topics": 0}
+    if purge:
+        a = delete_range(None, since - timedelta(days=1))
+        b = delete_range(until + timedelta(days=1), None) if until else {"articles": 0, "topics": 0}
+        deleted = {k: a[k] + b[k] for k in a}
+    _wake.set()
+    return {**res, **deleted}
+
+
+def sync_period() -> dict:
+    """Abrufaufgaben an den aktuellen Erfassungszeitraum anpassen (stoppen, wiederbeleben, einplanen)."""
+    since, until = period()
     hi = (until or date(9999, 12, 31)).isoformat()
     with db.tx() as conn:
         stopped = conn.execute(
@@ -510,13 +530,7 @@ def apply_period(since: date, until: date | None, purge: bool = False) -> dict:
             "UPDATE backfill_tasks SET status='offen', attempts=0, error='' WHERE status='übersprungen' "
             "AND error=? AND period_end>=? AND period_start<=?", (OUTSIDE_MARK, since.isoformat(), hi)).rowcount
     planned = plan_backfill()
-    deleted = {"articles": 0, "topics": 0}
-    if purge:
-        a = delete_range(None, since - timedelta(days=1))
-        b = delete_range(until + timedelta(days=1), None) if until else {"articles": 0, "topics": 0}
-        deleted = {k: a[k] + b[k] for k in a}
-    _wake.set()
-    return {"stopped": stopped, "revived": revived, "planned": planned, **deleted}
+    return {"stopped": stopped, "revived": revived, "planned": planned}
 
 
 def delete_range(d_from: date | None, d_to: date | None) -> dict:
@@ -727,8 +741,10 @@ def upgrade_on_start(changes: dict | None = None) -> list[str]:
                      f"nachgeholt, {n} Backfill-Aufgaben eingeplant")
     if config.state_get("topics_algo") != topics.ALGO_VERSION:
         if has_data:
-            config.state_set("pending_regroup", True)
-            notes.append("Verfahren der Themenbildung verbessert – vorhandene Themen werden neu gebündelt")
+            from . import maintenance
+            note = maintenance.decide_regroup("Verfahren der Themenbildung verbessert")
+            if note:
+                notes.append(note)
         config.state_set("topics_algo", topics.ALGO_VERSION)
     fp = sentiment.fingerprint()
     if config.state_get("rules_fingerprint") != fp:
@@ -803,17 +819,13 @@ def request_scan(kind: str = "manuell") -> None:
 
 def _scheduler_loop() -> None:
     time.sleep(2)
-    last_catchup = last_translate = 0.0
+    last_catchup = 0.0
     while not _stop.is_set():
         try:
             kind = _manual_request.pop("kind", None)
             pending = config.state_get("pending_catchup") or []
-            if config.state_get("pending_regroup") and not STATUS["regroup"]:
-                regroup()
-                config.state_set("pending_regroup", False)
-            if config.state_get("pending_reclassify") and not STATUS["reclassify"]:
-                reclassify()
-                config.state_set("pending_reclassify", False)
+            from . import maintenance
+            maintenance.work()      # Selbstpflege: Grundlagen prüfen, nachziehen, KI-Nachbewertung
             if kind:
                 run_scan(kind)
             elif pending and config.state_get("initial_done") and time.time() - last_catchup > 600:
@@ -826,9 +838,6 @@ def _scheduler_loop() -> None:
             elif datetime.now(timezone.utc) >= next_scan_time():
                 run_scan("regulär")
             STATUS["next_scan_at"] = next_scan_time().isoformat()
-            if time.time() - last_translate > 1800:
-                last_translate = time.time()
-                translate_pending()
         except Exception:
             log.exception("Fehler in der Zeitsteuerung")
         _wake.wait(30)
