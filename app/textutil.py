@@ -115,3 +115,34 @@ def shorten(text: str, max_chars: int = 420) -> str:
     if m > max_chars * 0.5:
         return cut[: m + 1]
     return cut.rsplit(" ", 1)[0] + " …"
+
+
+_CJK_CHAR = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+_EN_WORDS = set("the and of to in for is on with by at from as its it that will has have says said after over "
+                "new than more amid sales cars car".split())
+_DE_WORDS = set("der die das und den von mit für ist im des dem nicht auf eine ein sich auch bei zu".split())
+
+
+def detect_lang(text: str, default: str = "de") -> str:
+    """Grobe Spracherkennung (de/en/zh) für Titel und Teaser."""
+    if not text:
+        return default
+    cjk = len(_CJK_CHAR.findall(text))
+    if cjk >= 2 and cjk >= 0.2 * len(text.replace(" ", "")):
+        return "zh"
+    words = re.findall(r"[a-zäöüß]+", text.lower())
+    en = sum(w in _EN_WORDS for w in words)
+    de = sum(w in _DE_WORDS for w in words) + sum(ch in "äöüß" for ch in text.lower())
+    if en >= 2 and en > de:
+        return "en"
+    if de >= 2 and de > en:
+        return "de"
+    return default
+
+
+def cjk_bigrams(text: str) -> list[str]:
+    """Für chinesische Texte: überlappende Zeichenpaare als Tokens (Themenbildung)."""
+    out = []
+    for run in re.findall(r"[\u3400-\u9fff\uf900-\ufaff]+", text or ""):
+        out += [run[i:i + 2] for i in range(max(1, len(run) - 1))]
+    return out

@@ -106,8 +106,9 @@ def maybe_public(request: Request) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    sources.seed_sources()
+    changes = sources.seed_sources()
     pipeline.ensure_default_period()
+    pipeline.upgrade_on_start(changes)
     init_admin_password()
     if os.environ.get("NNIGN_DISABLE_SCHEDULER") != "1":
         pipeline.start_background()

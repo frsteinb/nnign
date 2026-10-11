@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 from . import db, sentiment
-from .textutil import shorten, tokens
+from .textutil import cjk_bigrams, shorten, tokens
 
 SIG_SIZE = 60
 DF_TOTAL = "__N__"
@@ -15,9 +15,9 @@ DF_TOTAL = "__N__"
 
 def article_vector(title: str, summary: str) -> Counter:
     vec = Counter()
-    for t in tokens(title):
+    for t in tokens(title) + cjk_bigrams(title):
         vec[t] += 2.0
-    for t in tokens(summary):
+    for t in tokens(summary) + cjk_bigrams(summary):
         vec[t] += 1.0
     return vec
 

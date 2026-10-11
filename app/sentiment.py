@@ -168,13 +168,134 @@ RULES: list[Rule] = [
          -1.5, "„Sorge um Standorte“, „schwaches Quartal“"),
 ]
 
-_NEGATORS = {"kein", "keine", "keinen", "keiner", "keinem", "nicht", "ohne", "kaum", "weder", "nie", "niemals"}
-_CONCESSIVE = {"trotz"}
-_SENT = re.compile(r"[.!?;]+(?=\s|$)")  # nicht bei „ID.2“ oder „2.000“
+_NEGATORS = {"kein", "keine", "keinen", "keiner", "keinem", "nicht", "ohne", "kaum", "weder", "nie", "niemals",
+             # englisch
+             "no", "not", "without", "never", "nor"}
+_CONCESSIVE = {"trotz", "despite"}
+_ZH_NEGATORS = ("不", "未", "没有", "没", "无")
+_SENT = re.compile(r"[.!?;。！？；]+(?=\s|$|[^\x00-\x7f])")  # nicht bei „ID.2“ oder „2.000“
+_SPLIT = re.compile(r"([.!?;。！？；]+(?=\s|$|[^\x00-\x7f]))")
 _WORD = re.compile(r"[a-z0-9]+")
 _MAX_PER_RULE = 1   # eine Regel zählt je Titel bzw. Teaser höchstens einmal
 
-_compiled_rules = [(r, re.compile(r"(?<![a-z0-9])(?:" + r.pattern + r")")) for r in RULES]
+# ---------------------------------------------------------------- Englisch (für unübersetzte Meldungen)
+
+EN_GOOD_METRICS = (r"sales|deliveries|revenue|revenues|profit|profits|earnings|operating profit|net income|margin|"
+                   r"margins|registrations|market share|orders|demand|shares|stock|share price|dividend|"
+                   r"cash flow|output|production")
+EN_BAD_METRICS = r"loss|losses|costs|debt|inventory|inventories|emissions"
+EN_UP = (r"rise|rises|rose|risen|rising|up|grow|grows|grew|grown|growing|jump|jumps|jumped|surge|surges|surged|"
+         r"climb|climbs|climbed|increase|increases|increased|soar|soars|soared|beat|beats|double|doubled|"
+         r"hit record|at record")
+EN_DOWN = (r"fall|falls|fell|fallen|falling|drop|drops|dropped|down|decline|declines|declined|declining|"
+           r"slump|slumps|slumped|plunge|plunges|plunged|slide|slides|slid|shrink|shrinks|shrank|sink|sinks|"
+           r"sank|tumble|tumbles|tumbled|miss|misses|missed|halve|halved|lower|weaker")
+
+EN_RULES: list[Rule] = [
+    Rule("Neues Produkt", r"unveil\w*|launch\w*|debut\w*|premiere\w*|introduc\w*|reveal\w*|start\w* production|"
+         r"(?:new|next-generation) (?:model|car|ev|suv|platform|battery|software)\w*", 2.0, "“VW unveils new ID.2”"),
+    Rule("Verbesserung", r"improv\w*|upgrade\w*|breakthrough|innovation\w*|more range|faster charging",
+         1.5, "“update improves range”"),
+    Rule("Kundenzuspruch", r"best-?sell\w*|popular|strong demand|sold out|waiting list\w*|top-selling|"
+         r"market leader|big order|major order|wins? (?:an? )?order", 2.0, "“ID.4 becomes best-seller”"),
+    Rule("Gutes Testergebnis", r"five-star|5-star|top safety pick|wins? (?:the )?(?:test|comparison)|"
+         r"best in class|car of the year", 2.5, "“five-star Euro NCAP rating”"),
+    Rule("Markt/Finanzen positiv", r"record (?:sales|deliveries|profit|revenue|quarter|year)|"
+         r"raises? (?:its )?(?:guidance|forecast|outlook)|beats? (?:estimates|expectations|forecasts)|"
+         r"better than expected|above expectations|rebound\w*|recover\w*|upbeat|optimis\w*|gains? market share",
+         2.5, "“Porsche raises guidance”"),
+    Rule("Investition/Arbeitsplätze", r"invest\w*|new plant|new factory|opens? (?:a )?(?:plant|factory)|"
+         r"expan\w*|new jobs|creates? jobs|(?:wage|labou?r) (?:deal|agreement)|reach\w* (?:a )?deal|agreement",
+         1.5, "“VW to invest $5 billion”"),
+    Rule("Ansehen positiv", r"award\w*|honou?r\w*|prais\w*|pioneer\w*|carbon-neutral|sustainab\w*",
+         2.0, "“wins sustainability award”"),
+    Rule("Recht/Behörden positiv", r"acquit\w*|dismiss\w* (?:the )?(?:lawsuit|case|charges)|approv\w*|green light|"
+         r"cleared", 2.0, "“court dismisses lawsuit”"),
+    Rule("Kooperation", r"partnership\w*|partners? with|joint venture|alliance|cooperation", 1.0,
+         "“partnership with Rivian”"),
+    Rule("Kritik", r"critici\w*|criticis\w*|backlash|outcry|protest\w*|boycott\w*|slam\w*|blast\w*|accus\w*|"
+         r"allegation\w*", -2.0, "“critics slam software”"),
+    Rule("Rückruf", r"recall\w*", -3.0, "“recalls 50,000 cars”"),
+    Rule("Mäßiges/schlechtes Testergebnis", r"(?:one|two|three|four|[1-4])-star|fails? (?:the )?(?:test|crash test)|"
+         r"poor rating|mediocre|average rating", -2.5, "“three-star rating”"),
+    Rule("Markt/Finanzen negativ", r"profit warning|cuts? (?:its )?(?:guidance|forecast|outlook)|"
+         r"lowers? (?:its )?(?:guidance|forecast|outlook)|miss\w* (?:estimates|expectations)|worse than expected|"
+         r"below expectations|record loss|in the red|crisis|under pressure|insolven\w*|bankrupt\w*|"
+         r"loses? market share|slowdown|weak\w*", -2.5, "“profit warning”, “sales slump in China”"),
+    Rule("Verzögerung", r"delay\w*|postpon\w*|push\w* back|behind schedule|later than planned",
+         -2.5, "“ID.2 launch delayed”"),
+    Rule("Ansehen negativ", r"scandal\w*|fraud\w*|cheat\w*|manipulat\w*|defeat device\w*|dieselgate|corruption|"
+         r"brib\w*|forced labou?r|human rights|uyghur\w*|xinjiang|greenwashing", -3.0, "“emissions scandal”"),
+    Rule("Recht/Ermittlungen", r"lawsuit\w*|sue\w*|sued|charg\w* with|indict\w*|convict\w*|fine\w*|fined|"
+         r"penalt\w*|probe\w*|investigat\w*|raid\w*|prosecut\w*|class action|ban(?:s|ned)?(?![a-z])",
+         -2.5, "“prosecutors probe Audi”"),
+    Rule("Stellenabbau/Werke", r"job cuts?|cuts? (?:\w+ )?jobs|layoff\w*|lay off|plant closure\w*|"
+         r"clos\w* (?:a |the )?(?:plant|factory)|cost-cutting|savings plan", -2.5, "“VW to cut 35,000 jobs”"),
+    Rule("Produktion/Technik-Probleme", r"strike\w*|walkout\w*|production halt\w*|halts? production|shortage\w*|"
+         r"supply (?:problems|issues|disruption\w*)|glitch\w*|problem\w*|issues|defect\w*|fault\w*|fire|"
+         r"cyberattack\w*|hack\w*|data leak\w*|bug\w*", -2.0, "“software glitches”, “strike halts plant”"),
+    Rule("Personal/Führung", r"resign\w*|steps? down|ousted|power struggle|turmoil|chaos", -1.5,
+         "“brand chief resigns”"),
+    Rule("Politik/Handel", r"tariff\w*|trade war|sanction\w*|duties", -1.5, "“EU tariffs on Chinese-made EVs”"),
+    Rule("Unfall/Sicherheit", r"dead|death\w*|kill\w*|fatal\w*|crash\w*|injur\w*", -2.0, "“fatal crash”"),
+    Rule("Sorgen/Risiken", r"concern\w*|worr\w*|fear\w*|threat\w*|warn\w*|risk\w*|disappoint\w*|struggl\w*|"
+         r"loses?|lost", -1.5, "“concerns over plants”"),
+]
+
+# ---------------------------------------------------------------- Chinesisch (ohne Wortgrenzen)
+
+ZH_GOOD_METRICS = r"销量|交付量|交付|营收|收入|利润|净利润|营业利润|利润率|市场份额|订单|需求|股价|股息|产量"
+ZH_BAD_METRICS = r"亏损|成本|债务|库存|排放"
+ZH_UP = r"增长|上涨|上升|提升|增加|大涨|飙升|翻番|创新高|同比增|环比增"
+ZH_DOWN = r"下滑|下降|下跌|减少|大跌|暴跌|萎缩|腰斩|不及预期|同比降|环比降|同比下"
+
+ZH_RULES: list[Rule] = [
+    Rule("Neues Produkt", r"发布|首发|亮相|上市|推出|新车|量产|投产|预售", 2.0, "„发布新车“ (stellt neues Auto vor)"),
+    Rule("Kundenzuspruch", r"热销|畅销|销冠|供不应求|订单火爆|大单", 2.0, "„热销“ (verkauft sich gut)"),
+    Rule("Gutes Testergebnis", r"五星|满分|最高评级", 2.5, "„五星“ (fünf Sterne)"),
+    Rule("Markt/Finanzen positiv", r"创纪录|新高|超预期|上调.{0,6}(?:预期|指引)|回暖|复苏", 2.5, "„超预期“ (über den Erwartungen)"),
+    Rule("Investition/Arbeitsplätze", r"投资|新工厂|扩产|建厂|增资", 1.5, "„投资“ (Investition)"),
+    Rule("Kooperation", r"合作|合资|联手|战略伙伴", 1.0, "„合作“ (Kooperation)"),
+    Rule("Ansehen positiv", r"获奖|荣获|殊荣", 2.0, "„荣获“ (ausgezeichnet)"),
+    Rule("Kritik", r"批评|质疑|抵制|投诉|维权", -2.0, "„投诉“ (Beschwerden)"),
+    Rule("Rückruf", r"召回", -3.0, "„召回“ (Rückruf)"),
+    Rule("Mäßiges/schlechtes Testergebnis", r"[一二三四1-4]星|不合格", -2.5, "„三星“ (drei Sterne)"),
+    Rule("Markt/Finanzen negativ", r"下调.{0,6}(?:预期|指引)|不及预期|危机|承压|破产|失去.{0,4}份额|份额.{0,4}(?:下降|萎缩)",
+         -2.5, "„不及预期“ (unter den Erwartungen)"),
+    Rule("Verzögerung", r"推迟|延期|延迟|跳票", -2.5, "„推迟“ (verschoben)"),
+    Rule("Ansehen negativ", r"丑闻|造假|作弊|排放门|腐败|贿赂|强迫劳动|新疆", -3.0, "„排放门“ (Abgasskandal)"),
+    Rule("Recht/Ermittlungen", r"起诉|诉讼|罚款|处罚|调查|判决", -2.5, "„调查“ (Ermittlungen)"),
+    Rule("Stellenabbau/Werke", r"裁员|关厂|关闭.{0,4}工厂|减产|停产", -2.5, "„裁员“ (Stellenabbau)"),
+    Rule("Produktion/Technik-Probleme", r"罢工|故障|缺陷|问题|缺芯|断供|起火|自燃", -2.0, "„故障“ (Defekt)"),
+    Rule("Politik/Handel", r"关税|制裁|贸易战", -1.5, "„关税“ (Zölle)"),
+    Rule("Sorgen/Risiken", r"担忧|风险|警告|失利", -1.5, "„担忧“ (Sorge)"),
+]
+
+
+def _pairs(good: str, bad: str, up: str, down: str, b: str = r"(?<![a-z])", e: str = r"(?![a-z])",
+           gap: str = r"(?:[ ,]+[a-z0-9.%-]+){0,5}?[ ,]+", gap2: str = r"(?:[ ,]+[a-z0-9.%-]+){0,3}?[ ,]+"):
+    return [
+        (re.compile(rf"{b}(?:{good}){e}{gap}(?:{up}){e}"), +1),
+        (re.compile(rf"{b}(?:{good}){e}{gap}(?:{down}){e}"), -1),
+        (re.compile(rf"{b}(?:{bad}){e}{gap}(?:{up}){e}"), -1),
+        (re.compile(rf"{b}(?:{bad}){e}{gap}(?:{down}){e}"), +1),
+        (re.compile(rf"{b}(?:{up}){e}{gap2}(?:{good}){e}"), +1),
+        (re.compile(rf"{b}(?:{down}){e}{gap2}(?:{good}){e}"), -1),
+    ]
+
+
+_LANG_PAIRS = {
+    "de": _PAIR_PATTERNS,
+    "en": _pairs(EN_GOOD_METRICS, EN_BAD_METRICS, EN_UP, EN_DOWN),
+    "zh": _pairs(ZH_GOOD_METRICS, ZH_BAD_METRICS, ZH_UP, ZH_DOWN, b="", e="", gap=r"[^。，,；]{0,8}?",
+                 gap2=r"[^。，,；]{0,4}?"),
+}
+_LANG_RULES = {
+    "de": [(r, re.compile(r"(?<![a-z0-9])(?:" + r.pattern + r")")) for r in RULES],
+    "en": [(r, re.compile(r"(?<![a-z0-9])(?:" + r.pattern + r")(?![a-z])")) for r in EN_RULES],
+    "zh": [(r, re.compile(r.pattern)) for r in ZH_RULES],
+}
+_compiled_rules = _LANG_RULES["de"]
 
 
 def _extra_rules() -> list:
@@ -228,6 +349,8 @@ class Result:
 
 
 def _modifier(text: str, start: int) -> float:
+    if any(n in text[max(0, start - 3):start] for n in _ZH_NEGATORS):
+        return -0.5
     before = _WORD.findall(text[max(0, start - 40):start])[-3:]
     if any(w in _NEGATORS for w in before):
         return -0.5
@@ -236,7 +359,7 @@ def _modifier(text: str, start: int) -> float:
     return 1.0
 
 
-def _score_segment(original: str, factor: float, rules) -> Result:
+def _score_segment(original: str, factor: float, rules, pairs=_PAIR_PATTERNS) -> Result:
     res = Result()
     text, posmap = _fold_with_map(original)
 
@@ -250,13 +373,13 @@ def _score_segment(original: str, factor: float, rules) -> Result:
         res.hits.append({"k": category, "t": original[a:b].strip()[:60], "w": w})
 
     offset = 0
-    for part in re.split(r"([.!?;]+(?=\s|$))", text):
+    for part in _SPLIT.split(text):
         if not part or _SENT.fullmatch(part):
             offset += len(part)
             continue
         s = part
         # 1. Kennzahl + Richtung; gefundene Stellen ausblenden
-        for pat, sign in _PAIR_PATTERNS:
+        for pat, sign in pairs:
             for m in list(pat.finditer(s)):
                 hit("Kennzahl + Richtung", offset, m, sign * PAIR_WEIGHT * _modifier(s, m.start()))
             s = pat.sub(lambda m: " " * len(m.group(0)), s)
@@ -272,11 +395,23 @@ def _score_segment(original: str, factor: float, rules) -> Result:
     return res
 
 
-def analyze(title: str, summary: str = "") -> Result:
-    rules = _compiled_rules + _extra_rules()
-    res = _score_segment(title or "", 2.0, rules)
-    res.add(_score_segment(summary or "", 1.0, rules))
+def analyze(title: str, summary: str = "", lang: str = "de") -> Result:
+    """lang: Sprache des Textes (de/en/zh); übersetzte Meldungen werden als de bewertet."""
+    lang = lang if lang in _LANG_RULES else "de"
+    rules = _LANG_RULES[lang] + _extra_rules()
+    pairs = _LANG_PAIRS[lang]
+    res = _score_segment(title or "", 2.0, rules, pairs)
+    res.add(_score_segment(summary or "", 1.0, rules, pairs))
     return res
+
+
+def fingerprint() -> str:
+    """Kennung des Regelstands; ändert sie sich (neues Image), wird beim Start neu bewertet."""
+    import hashlib
+    parts = [f"{r.category}|{r.pattern}|{r.weight}" for r in RULES + EN_RULES + ZH_RULES]
+    parts += [p.pattern for pairs in _LANG_PAIRS.values() for p, _ in pairs]
+    parts += [str(PAIR_WEIGHT), str(_MAX_PER_RULE), ",".join(sorted(_NEGATORS))]
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
 def score(title: str, summary: str = "") -> float:

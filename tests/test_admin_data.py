@@ -67,7 +67,7 @@ def test_apply_period_plans_stops_and_purges(env):
 
 
 def test_delete_range_and_wipe(env):
-    from app import config, db, pipeline
+    from app import config, db, pipeline, sources
     setup_world(env)
     pipeline.run_scan("initial")
     assert db.query_one("SELECT COUNT(*) n FROM topics")["n"] >= 2
@@ -83,7 +83,7 @@ def test_delete_range_and_wipe(env):
     assert db.query_one("SELECT COUNT(*) n FROM sources")["n"] == 2
     pipeline.wipe(factory=True)
     assert config.source_of("scan_interval_hours") == "default"
-    assert db.query_one("SELECT COUNT(*) n FROM sources")["n"] == 15   # Standardquellen
+    assert db.query_one("SELECT COUNT(*) n FROM sources")["n"] == len(sources.DEFAULT_SOURCES)
 
 
 def test_reclassify_and_neutral(env):

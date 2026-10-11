@@ -45,6 +45,14 @@ DEFAULT_STRONG = [
     r"Dieselskandal",
     r"Abgasskandal",
     r"Dieselgate",
+    # Chinesisch („大众“ allein heißt auch „Öffentlichkeit“, daher nur eindeutige Formen)
+    r"大众汽车",
+    r"大众集团",
+    r"一汽-大众",
+    r"一汽大众",
+    r"上汽大众",
+    r"大众中国",
+    r"大众安徽",
 ]
 
 DEFAULT_BRANDS = [
@@ -61,6 +69,14 @@ DEFAULT_BRANDS = [
     r"MAN Truck\w*",
     r"MAN-Lkw",
     r"Navistar",
+    r"奥迪",
+    r"保时捷",
+    r"斯柯达",
+    r"西雅特",
+    r"宾利",
+    r"兰博基尼",
+    r"布加迪",
+    r"斯堪尼亚",
 ]
 
 DEFAULT_EXCLUDE = [
@@ -110,7 +126,10 @@ SETTINGS: list[Setting] = [
             "Ergänzt die RSS-Feeds um eine Suche mit site:<domain> (findet auch Artikel, die nicht im Feed stehen).",
             "Abruf"),
     Setting("search_query", "str", "Volkswagen OR VW OR Audi OR Porsche OR Skoda OR Seat OR Cupra OR Traton OR Cariad",
-            "Suchanfrage", "Wird um site:<domain> und Zeitfenster ergänzt.", "Abruf"),
+            "Suchanfrage (deutsch/englisch)", "Wird um site:<domain> und Zeitfenster ergänzt; gilt für deutsch- "
+            "und englischsprachige Quellen.", "Abruf"),
+    Setting("search_query_zh", "str", "大众汽车 OR 奥迪 OR 保时捷 OR 斯柯达 OR 一汽-大众 OR 上汽大众",
+            "Suchanfrage (chinesisch)", "Für Quellen mit Sprache „zh“.", "Abruf"),
     Setting("host_delay_seconds", "float", 1.2, "Pause je Host (Sekunden)",
             "Mindestabstand zwischen zwei Anfragen an denselben Host (Höflichkeit/Ratelimits).", "Abruf"),
     Setting("wayback_delay_seconds", "float", 4.0, "Pause je Anfrage an das Internet Archive (Sekunden)",
@@ -185,6 +204,23 @@ SETTINGS: list[Setting] = [
             "Achtung: bei 25 Jahren Historie viele tausend Aufrufe.", "KI"),
     Setting("llm_max_calls_per_day", "int", 1500, "Max. KI-Aufrufe pro Tag",
             "Kostenbremse; danach regelbasiert.", "KI"),
+    # --- Übersetzung
+    Setting("translate_provider", "choice", "auto", "Übersetzer für englische/chinesische Meldungen",
+            "auto = erster verfügbarer: LibreTranslate (wenn URL gesetzt), DeepL (wenn Key gesetzt), KI-Anbieter. "
+            "none = nicht übersetzen, Originaltext anzeigen.", "Übersetzung",
+            ["auto", "libretranslate", "deepl", "llm", "none"]),
+    Setting("libretranslate_url", "str", "", "LibreTranslate-URL",
+            "Freier Übersetzungsserver ohne API-Key, z. B. http://libretranslate:5000 "
+            "(docker compose --profile uebersetzung up -d). Umgebungsvariable: LIBRETRANSLATE_URL.",
+            "Übersetzung", env=["LIBRETRANSLATE_URL"]),
+    Setting("libretranslate_api_key", "secret", "", "LibreTranslate API-Key",
+            "Nur für öffentliche Instanzen mit Key-Pflicht nötig. Umgebungsvariable: LIBRETRANSLATE_API_KEY.",
+            "Übersetzung", env=["LIBRETRANSLATE_API_KEY"]),
+    Setting("deepl_api_key", "secret", "", "DeepL API-Key",
+            "Kostenloser Tarif (Key endet auf :fx) reicht meist. Umgebungsvariable: DEEPL_API_KEY.",
+            "Übersetzung", env=["DEEPL_API_KEY"]),
+    Setting("deepl_url", "str", "", "DeepL-URL (optional)",
+            "Leer = automatisch (api-free.deepl.com bei Free-Keys, sonst api.deepl.com).", "Übersetzung"),
     # --- Anzeige
     Setting("public_dashboard", "bool", True, "Dashboard ohne Login sichtbar",
             "Wenn aus, ist auch die Übersicht passwortgeschützt.", "Anzeige"),

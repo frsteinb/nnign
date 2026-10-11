@@ -10,11 +10,11 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-from . import config, db, fetcher, llm, sentiment, topics
+from . import config, db, fetcher, llm, sentiment, topics, translate
 from .fetcher import FetchError, Item
 from .relevance import Matcher
 from .sources import all_sources, feeds_of
-from .textutil import normalize_url, shorten, title_key
+from .textutil import detect_lang, normalize_url, shorten, title_key
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +76,8 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
             it.published = now
         if matcher.score(it.title, it.summary) <= 0:
             continue
+        # Quellsprache als Vorgabe, der Text selbst entscheidet (z. B. englische Meldung einer DE-Quelle)
+        it.lang = detect_lang(f"{it.title} {it.summary}", default=it.lang or "de")
         key = (title_key(it.title), it.source_domain)
         prev = fresh.get(key)
         if prev is None or (not prev.summary and it.summary):
@@ -105,19 +107,25 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
     new_items.sort(key=lambda x: x.published)
     use_llm = allow_llm and llm.available()
 
+    # 3b. Fremdsprachige Meldungen ins Deutsche übersetzen (Original bleibt erhalten)
+    if any(it.lang != "de" for it in new_items):
+        n = translate.translate_items(new_items, allow_llm=allow_llm)
+        if n:
+            ctx.log(f"{n} fremdsprachige Meldungen übersetzt ({translate.NAMES[translate.provider()]})")
+
     # 4. Themen zuordnen (serialisiert, damit parallele Läufe keine Doppel-Themen erzeugen).
     #    Pro Meldung eine kurze Schreibtransaktion; der KI-Aufruf läuft außerhalb davon.
     with _ingest_lock:
         conn = db.connect()
         idf = topics.Idf(conn)
         for it in new_items:
-            tkey = title_key(it.title)
+            tkey = title_key(it.title_orig or it.title)
             if conn.execute("SELECT 1 FROM articles WHERE url=? OR (title_key=? AND source_domain=?)",
                             (it.url, tkey, it.source_domain)).fetchone():
                 continue
             vec = topics.article_vector(it.title, it.summary)
             pub = it.published.replace(microsecond=0).isoformat()
-            senti = sentiment.analyze(it.title, it.summary)
+            senti = sentiment.analyze(it.title, it.summary, "de" if it.translated_by else it.lang)
             art_score = senti.score
             art_detail = senti.detail()
             matches = topics.best_matches(conn, vec, it.published, idf, window)
@@ -154,11 +162,11 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                                                 threshold, ctx)
                 conn.execute(
                     "INSERT OR IGNORE INTO articles(url, title, title_key, summary, source_name, source_domain, "
-                    "published_at, fetched_at, via, relevant, sentiment_score, sentiment_detail, topic_id) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "published_at, fetched_at, via, relevant, sentiment_score, sentiment_detail, topic_id, "
+                    "lang, title_orig, summary_orig, translated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (it.url, it.title, tkey, it.summary, it.source_name, it.source_domain, pub, db.utcnow(),
                      it.via, relevant, art_score, json.dumps(art_detail, ensure_ascii=False),
-                     topic_id if relevant else None))
+                     topic_id if relevant else None, it.lang, it.title_orig, it.summary_orig, it.translated_by))
                 if relevant:
                     idf.add_document(vec.keys())
                     ctx.new_articles += 1
@@ -187,12 +195,12 @@ def reclassify() -> dict:
     STATUS["reclassify"] = "läuft"
     n_art = n_topic = 0
     try:
-        rows = db.query("SELECT id, title, summary FROM articles")
+        rows = db.query("SELECT id, title, summary, lang, translated_by FROM articles")
         with _ingest_lock:
             for i in range(0, len(rows), 500):
                 with db.tx() as conn:
                     for a in rows[i:i + 500]:
-                        r = sentiment.analyze(a["title"], a["summary"])
+                        r = sentiment.analyze(a["title"], a["summary"], "de" if a["translated_by"] else a["lang"])
                         conn.execute("UPDATE articles SET sentiment_score=?, sentiment_detail=? WHERE id=?",
                                      (r.score, json.dumps(r.detail(), ensure_ascii=False), a["id"]))
                         n_art += 1
@@ -210,10 +218,13 @@ def reclassify() -> dict:
 
 # ====================================================================== Scans
 
-def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool) -> list[Item]:
+def _query_for(src) -> str:
+    return config.get("search_query_zh") if fetcher.src_lang(src) == "zh" else config.get("search_query")
+
+
+def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool, source_ids: list[int] | None = None) -> list[Item]:
     items: list[Item] = []
     search = bool(config.get("search_enabled"))
-    query = config.get("search_query")
     recent_days = int(config.get("initial_recent_days"))
     today = datetime.now(timezone.utc).date()
     since, until = period()
@@ -231,17 +242,17 @@ def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool) -> list[Item]:
             try:
                 if initial:
                     for start, end in fetcher.iter_periods(search_from, search_to, "week"):
-                        got += fetcher.fetch_search(http, src, query, after=start - timedelta(days=1),
+                        got += fetcher.fetch_search(http, src, _query_for(src), after=start - timedelta(days=1),
                                                     before=end + timedelta(days=1))
                 else:
-                    got += fetcher.fetch_search(http, src, query, when_days=2)
+                    got += fetcher.fetch_search(http, src, _query_for(src), when_days=2)
             except (FetchError, httpx.HTTPError, ValueError) as exc:
                 errors.append(f"Suche: {exc}")
         status = "ok" if not errors else ("teilweise: " if got else "fehler: ") + "; ".join(errors)
         _source_status(src["id"], status, len(got))
         return src, got, errors
 
-    srcs = all_sources(enabled_only=True)
+    srcs = [s for s in all_sources(enabled_only=True) if source_ids is None or s["id"] in source_ids]
     with ThreadPoolExecutor(max_workers=max(1, int(config.get("backfill_workers")))) as pool:
         for src, got, errors in pool.map(work, srcs):
             items += got
@@ -251,8 +262,9 @@ def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool) -> list[Item]:
     return items
 
 
-def run_scan(kind: str) -> int | None:
-    """kind: initial | regulär | manuell. Gibt die Run-ID zurück (None, wenn bereits ein Scan läuft)."""
+def run_scan(kind: str, source_ids: list[int] | None = None) -> int | None:
+    """kind: initial | regulär | manuell | nachholen. Gibt die Run-ID zurück (None, wenn bereits ein Scan läuft).
+    nachholen = wie initial, aber nur für source_ids (neue bzw. geänderte Quellen nach einem Update)."""
     if not _scan_lock.acquire(blocking=False):
         return None
     ctx = Ctx(kind)
@@ -262,14 +274,19 @@ def run_scan(kind: str) -> int | None:
     status = "ok"
     http = fetcher.Http()
     try:
-        initial = kind == "initial"
-        items = _collect_current(http, ctx, initial)
+        initial = kind in ("initial", "nachholen")
+        items = _collect_current(http, ctx, initial, source_ids)
         STATUS["scan"]["phase"] = f"Analyse von {len(items)} Meldungen"
         ingest(items, ctx, allow_llm=True, http=http, fetch_details=False,
                max_age_days=None if initial else int(config.get("regular_lookback_days")))
         ctx.log(f"Fertig: {ctx.candidates} neue relevante Kandidaten, {ctx.new_articles} gespeichert, "
                 f"{ctx.new_topics} neue Themen, {ctx.llm_calls} KI-Aufrufe")
-        if initial:
+        if kind == "nachholen":
+            if ctx.fetched == 0 and source_ids:
+                raise RuntimeError("Nachholen für neue Quellen ergab keine Meldungen – wird später wiederholt.")
+            config.state_set("pending_catchup", [])
+            plan_backfill()
+        if kind == "initial":
             if ctx.fetched == 0:
                 # Vermutlich kein Netz: Initial-Scan später wiederholen statt als erledigt zu markieren
                 raise RuntimeError("Keine einzige Meldung abrufbar – Netzwerk/Proxy prüfen. "
@@ -345,7 +362,6 @@ def plan_backfill() -> int:
     recent_days = int(config.get("initial_recent_days"))
     win = max(7, int(config.get("backfill_search_window_days")))
     search = bool(config.get("search_enabled"))
-    query = config.get("search_query")
     created = 0
     with db.tx() as conn:
         for src in all_sources(enabled_only=True):
@@ -368,8 +384,8 @@ def plan_backfill() -> int:
                 d, i = since, 0
                 while d <= end_hist:
                     e = min(d + timedelta(days=win - 1), end_hist)
-                    url = fetcher.search_url(query, src["domain"], after=d - timedelta(days=1),
-                                             before=e + timedelta(days=1))
+                    url = fetcher.search_url(_query_for(src), src["domain"], after=d - timedelta(days=1),
+                                             before=e + timedelta(days=1), lang=fetcher.src_lang(src))
                     rows.append(("search", url, d, e, _priority(i)))
                     d, i = e + timedelta(days=1), i + 1
             for method, target, start, end, prio in rows:
@@ -580,6 +596,78 @@ def reset_backfill(only_failed: bool = True) -> int:
     return cur.rowcount
 
 
+# ====================================================================== Aktualisierung nach Image-Update
+
+def upgrade_on_start(changes: dict | None = None) -> list[str]:
+    """Beim Start: Datenbestand an ein neues Image anpassen.
+
+    - neue/geänderte Standardquellen (aus sources.seed_sources): aktuellen Zeitraum nachholen und
+      Backfill für den Erfassungszeitraum einplanen,
+    - geänderte Bewertungsregeln: alle Meldungen neu bewerten,
+    - unübersetzte fremdsprachige Meldungen werden laufend nachübersetzt (siehe translate_pending).
+    Gibt die durchgeführten Schritte zurück (auch als Lauf „aktualisierung“ protokolliert)."""
+    changes = changes or {}
+    notes: list[str] = []
+    has_data = bool(db.query_one("SELECT 1 FROM articles LIMIT 1"))
+    ids = list(changes.get("added", [])) + list(changes.get("updated", []))
+    if ids and config.state_get("initial_done"):
+        names = [r["name"] for r in db.query(
+            f"SELECT name FROM sources WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))]
+        config.state_set("pending_catchup", sorted(set(config.state_get("pending_catchup") or []) | set(ids)))
+        n = plan_backfill()
+        notes.append(f"Neue/aktualisierte Standardquellen: {', '.join(names)} – aktueller Zeitraum wird "
+                     f"nachgeholt, {n} Backfill-Aufgaben eingeplant")
+    fp = sentiment.fingerprint()
+    if config.state_get("rules_fingerprint") != fp:
+        if has_data:
+            config.state_set("pending_reclassify", True)
+            notes.append("Bewertungsregeln geändert – alle Meldungen werden neu bewertet")
+        config.state_set("rules_fingerprint", fp)
+    if notes:
+        now = db.utcnow()
+        with db.tx() as conn:
+            conn.execute("INSERT INTO runs(kind, started_at, finished_at, status, log) VALUES(?,?,?,?,?)",
+                         ("aktualisierung", now, now, "ok", "\n".join(notes)))
+        for n in notes:
+            log.info("Aktualisierung: %s", n)
+        _wake.set()
+    return notes
+
+
+def translate_pending(limit: int = 200) -> int:
+    """Noch unübersetzte fremdsprachige Meldungen nachübersetzen (z. B. wenn erst später ein Übersetzer
+    eingerichtet wurde). Bewertung und Themenfelder werden danach neu berechnet."""
+    if not translate.provider():
+        return 0
+    rows = db.query("SELECT id, title, summary, lang FROM articles WHERE lang!='de' AND translated_by='' "
+                    "AND relevant=1 ORDER BY published_at DESC LIMIT ?", (limit,))
+    if not rows:
+        return 0
+    items = [Item(url="", title=r["title"], summary=r["summary"] or "", published=datetime.now(timezone.utc),
+                  source_name="", source_domain="", via="", lang=r["lang"]) for r in rows]
+    if not translate.translate_items(items, allow_llm=True):
+        return 0
+    done = 0
+    with _ingest_lock, db.tx() as conn:
+        touched = set()
+        for r, it in zip(rows, items):
+            if not it.translated_by:
+                continue
+            res = sentiment.analyze(it.title, it.summary, "de")
+            conn.execute("UPDATE articles SET title=?, summary=?, title_orig=?, summary_orig=?, translated_by=?, "
+                         "sentiment_score=?, sentiment_detail=? WHERE id=?",
+                         (it.title, it.summary, it.title_orig or r["title"], it.summary_orig, it.translated_by,
+                          res.score, json.dumps(res.detail(), ensure_ascii=False), r["id"]))
+            tid = conn.execute("SELECT topic_id FROM articles WHERE id=?", (r["id"],)).fetchone()["topic_id"]
+            if tid:
+                touched.add(tid)
+            done += 1
+        for tid in touched:
+            topics.refresh(conn, tid)
+    log.info("%d Meldungen nachübersetzt", done)
+    return done
+
+
 # ====================================================================== Zeitsteuerung
 
 def next_scan_time() -> datetime:
@@ -597,11 +685,19 @@ def request_scan(kind: str = "manuell") -> None:
 
 def _scheduler_loop() -> None:
     time.sleep(2)
+    last_catchup = last_translate = 0.0
     while not _stop.is_set():
         try:
             kind = _manual_request.pop("kind", None)
+            pending = config.state_get("pending_catchup") or []
+            if config.state_get("pending_reclassify") and not STATUS["reclassify"]:
+                reclassify()
+                config.state_set("pending_reclassify", False)
             if kind:
                 run_scan(kind)
+            elif pending and config.state_get("initial_done") and time.time() - last_catchup > 600:
+                last_catchup = time.time()
+                run_scan("nachholen", pending)
             elif not config.state_get("initial_done"):
                 last = db.query_one("SELECT MAX(started_at) t FROM runs WHERE kind='initial'")
                 if not last["t"] or datetime.now(timezone.utc) - datetime.fromisoformat(last["t"]) > timedelta(minutes=10):
@@ -609,6 +705,9 @@ def _scheduler_loop() -> None:
             elif datetime.now(timezone.utc) >= next_scan_time():
                 run_scan("regulär")
             STATUS["next_scan_at"] = next_scan_time().isoformat()
+            if time.time() - last_translate > 1800:
+                last_translate = time.time()
+                translate_pending()
         except Exception:
             log.exception("Fehler in der Zeitsteuerung")
         _wake.wait(30)

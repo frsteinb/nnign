@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -145,9 +145,9 @@ def setup_world(mock):
     # Archivseiten (Backfill) – nur der 20.09.2015 enthält eine VW-Meldung
     def archive(path):
         if "20.09.2015" in path:
-            html = (f'<html><body><a href="/art/vw-abgas.html">VW gibt Manipulation von Abgaswerten in den USA zu</a>'
-                    f'<a href="/art/wetter.html">Das Wetter am Wochenende wird sonnig und warm</a>'
-                    f'<a href="https://fremd.example/vw">VW-Link auf fremde Domain wird ignoriert</a></body></html>')
+            html = ('<html><body><a href="/art/vw-abgas.html">VW gibt Manipulation von Abgaswerten in den USA zu</a>'
+                    '<a href="/art/wetter.html">Das Wetter am Wochenende wird sonnig und warm</a>'
+                    '<a href="https://fremd.example/vw">VW-Link auf fremde Domain wird ignoriert</a></body></html>')
         else:
             html = '<html><body><a href="/art/x.html">Eine ganz andere Meldung ohne Bezug heute</a></body></html>'
         return html.encode(), "text/html"

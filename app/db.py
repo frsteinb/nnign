@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS sources (
     archive_step  TEXT NOT NULL DEFAULT 'day', -- day | week | month | year
     archive_since TEXT NOT NULL DEFAULT '',   -- frühestes Datum der Archivseiten
     link_pattern  TEXT NOT NULL DEFAULT '',   -- Regex, dem Artikel-Links auf Archivseiten entsprechen müssen
+    language      TEXT NOT NULL DEFAULT 'de', -- Sprache der Quelle: de | en | zh
     enabled       INTEGER NOT NULL DEFAULT 1,
     last_fetch_at TEXT,
     last_status   TEXT,
@@ -62,7 +63,11 @@ CREATE TABLE IF NOT EXISTS articles (
     url           TEXT NOT NULL UNIQUE,
     title         TEXT NOT NULL,
     title_key     TEXT NOT NULL,
-    summary       TEXT NOT NULL DEFAULT '',
+    summary       TEXT NOT NULL DEFAULT '',   -- deutsch (bei fremdsprachigen Meldungen: Übersetzung)
+    lang          TEXT NOT NULL DEFAULT 'de', -- Originalsprache
+    title_orig    TEXT NOT NULL DEFAULT '',   -- Originaltitel, falls übersetzt oder fremdsprachig
+    summary_orig  TEXT NOT NULL DEFAULT '',
+    translated_by TEXT NOT NULL DEFAULT '',   -- leer = nicht übersetzt
     source_name   TEXT NOT NULL,
     source_domain TEXT NOT NULL,
     published_at  TEXT NOT NULL,
@@ -158,6 +163,11 @@ def query_one(sql: str, params=()):
 MIGRATIONS = [
     ("topics", "sentiment_detail", "TEXT NOT NULL DEFAULT '{}'"),
     ("articles", "sentiment_detail", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sources", "language", "TEXT NOT NULL DEFAULT 'de'"),
+    ("articles", "lang", "TEXT NOT NULL DEFAULT 'de'"),
+    ("articles", "title_orig", "TEXT NOT NULL DEFAULT ''"),
+    ("articles", "summary_orig", "TEXT NOT NULL DEFAULT ''"),
+    ("articles", "translated_by", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

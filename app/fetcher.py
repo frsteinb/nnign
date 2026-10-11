@@ -37,6 +37,17 @@ class Item:
     via: str  # rss | suche | archiv | wayback
     needs_details: bool = False
     extra: dict = field(default_factory=dict)
+    lang: str = "de"           # Sprache der Quelle bzw. erkannte Sprache
+    title_orig: str = ""       # Original, falls übersetzt
+    summary_orig: str = ""
+    translated_by: str = ""
+
+
+def src_lang(src) -> str:
+    try:
+        return src["language"] or "de"
+    except (KeyError, IndexError):
+        return "de"
 
 
 class FetchError(Exception):
@@ -147,13 +158,23 @@ def parse_feed(content: bytes, source_name: str, source_domain: str, via: str,
 
 def fetch_feed(http: Http, url: str, src) -> list[Item]:
     resp = http.get(url)
-    return parse_feed(resp.content, src["name"], src["domain"], "rss")
+    items = parse_feed(resp.content, src["name"], src["domain"], "rss")
+    for it in items:
+        it.lang = src_lang(src)
+    return items
 
 
 # ---------------------------------------------------------------- Nachrichtensuche (Google News RSS)
 
+SEARCH_EDITIONS = {  # Google-News-Ausgabe je Sprache der Quelle
+    "de": "hl=de&gl=DE&ceid=DE:de",
+    "en": "hl=en-US&gl=US&ceid=US:en",
+    "zh": "hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+}
+
+
 def search_url(query: str, domain: str | None, after: date | None = None, before: date | None = None,
-               when_days: int | None = None) -> str:
+               when_days: int | None = None, lang: str = "de") -> str:
     q = f"({query})" if " OR " in query else query
     if domain:
         q += f" site:{domain}"
@@ -163,7 +184,7 @@ def search_url(query: str, domain: str | None, after: date | None = None, before
         q += f" before:{before.isoformat()}"
     if when_days and not (after or before):
         q += f" when:{when_days}d"
-    return f"{GNEWS_BASE}?q={quote_plus(q)}&hl=de&gl=DE&ceid=DE:de"
+    return f"{GNEWS_BASE}?q={quote_plus(q)}&{SEARCH_EDITIONS.get(lang, SEARCH_EDITIONS['de'])}"
 
 
 _PUBLISHER_SUFFIX = re.compile(r"\s+[-–|]\s+[^-–|]{2,60}$")
@@ -188,12 +209,12 @@ def parse_search(content: bytes, src) -> list[Item]:
             title = _PUBLISHER_SUFFIX.sub("", title)
         published = (_struct_to_dt(e.get("published_parsed")) or datetime.now(timezone.utc))
         # Google-News-Beschreibungen enthalten nur Link-Listen -> kein Teaser
-        items.append(Item(link, title, "", published, src["name"], src["domain"], "suche"))
+        items.append(Item(link, title, "", published, src["name"], src["domain"], "suche", lang=src_lang(src)))
     return items
 
 
 def fetch_search(http: Http, src, query: str, after=None, before=None, when_days=None) -> list[Item]:
-    resp = http.get(search_url(query, src["domain"], after, before, when_days))
+    resp = http.get(search_url(query, src["domain"], after, before, when_days, src_lang(src)))
     return parse_search(resp.content, src)
 
 
@@ -295,7 +316,7 @@ def fetch_archive_page(http: Http, src, url: str, page_date: date, wayback_fallb
         via = "wayback"
     links = extract_links(resp.text, base, src["link_pattern"])
     published = day_start(page_date)
-    return [Item(u, t, "", published, src["name"], src["domain"], via, needs_details=True)
+    return [Item(u, t, "", published, src["name"], src["domain"], via, needs_details=True, lang=src_lang(src))
             for u, t in links if domain_matches(u, src["domain"])]
 
 
@@ -386,4 +407,7 @@ def wayback_snapshot_url(ts: str, original: str) -> str:
 def fetch_wayback_feed(http: Http, src, ts: str, original: str) -> list[Item]:
     resp = http.get(wayback_snapshot_url(ts, original))
     snap_date = datetime.strptime(ts[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
-    return parse_feed(resp.content, src["name"], src["domain"], "wayback", default_date=snap_date)
+    items = parse_feed(resp.content, src["name"], src["domain"], "wayback", default_date=snap_date)
+    for it in items:
+        it.lang = src_lang(src)
+    return items
