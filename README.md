@@ -16,7 +16,9 @@ stellt alles über einen Webserver auf **Port 8000** bereit.
 docker compose up -d --build
 ```
 
-Dann <http://localhost:8000> öffnen. Ohne Docker Compose:
+Dann <http://localhost:8000> öffnen. Optionale Einstellungen (Port, Admin-Passwort, API-Key, Proxy …)
+kommen in eine Datei `.env` neben `docker-compose.yml`; Vorlage: `cp .env.example .env`.
+Die Daten liegen in `./data`. Ohne Docker Compose:
 
 ```bash
 docker build -t vw-nachrichtenmonitor .

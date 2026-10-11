@@ -1,16 +1,42 @@
+# VW-Nachrichtenmonitor
+#
+#   docker compose up -d --build      starten (Weboberfläche: http://localhost:8000)
+#   docker compose logs -f            Protokoll ansehen (enthält beim ersten Start das Admin-Passwort)
+#   docker compose down               stoppen (Daten in ./data bleiben erhalten)
+#
+# Optionale Einstellungen in einer Datei .env neben dieser Datei (Vorlage: .env.example).
+# Alle NNIGN_*-Werte lassen sich später auch im Admin-Bereich (/admin) ändern; dort gespeicherte
+# Werte haben Vorrang vor diesen Umgebungsvariablen.
+
 services:
   vw-news:
     build: .
     image: vw-nachrichtenmonitor:latest
     container_name: vw-nachrichtenmonitor
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/data
-    environment:
-      # Optional – alles ist auch im Admin-Bereich (/admin) einstellbar.
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}          # leer = wird generiert und im Log ausgegeben
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}    # leer = rein regelbasierte Analyse
-      # NNIGN_SCAN_INTERVAL_HOURS: "4"
-      # NNIGN_BACKFILL_SINCE: "2000-01-01"
     restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./data:/data                                   # SQLite-Datenbank und admin_password.txt
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Leer = Passwort wird beim ersten Start erzeugt, im Log ausgegeben und in ./data abgelegt.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # Leer = rein regelbasierte Analyse ohne KI.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Vorbelegungen (leer = eingebauter Standard)
+      NNIGN_SCAN_INTERVAL_HOURS: ${NNIGN_SCAN_INTERVAL_HOURS:-4}
+      NNIGN_BACKFILL_SINCE: ${NNIGN_BACKFILL_SINCE:-2000-01-01}
+      NNIGN_BACKFILL_ENABLED: ${NNIGN_BACKFILL_ENABLED:-true}
+      NNIGN_LLM_MODEL: ${NNIGN_LLM_MODEL:-claude-opus-5-5}
+      NNIGN_PUBLIC_DASHBOARD: ${NNIGN_PUBLIC_DASHBOARD:-true}
+      # Nur nötig, wenn der Server ausschließlich über einen Proxy ins Internet kommt:
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
