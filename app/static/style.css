@@ -376,3 +376,9 @@ rect.cov.growing { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 1
 
 /* Abrufwege und Dienste im Admin-Status */
 .subhead { margin: 1.4rem 0 .2rem; font-size: 1.05rem; }
+
+/* Filter: Liste wird im Hintergrund neu geladen */
+.filters.loading ~ * { opacity: .55; transition: opacity .15s; }
+.filters.loading input[type=search] { background-image: linear-gradient(90deg, transparent, rgba(0,0,0,.06), transparent);
+  background-size: 200% 100%; animation: nnign-load 1s linear infinite; }
+@keyframes nnign-load { from { background-position: 200% 0; } to { background-position: -200% 0; } }

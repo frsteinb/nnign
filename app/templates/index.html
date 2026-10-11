@@ -166,108 +166,151 @@
 {% block scripts %}
 <script>
 (function () {
-  var wrap = document.querySelector('.chart-wrap');
-  if (wrap) {
-    var tip = wrap.querySelector('.tooltip');
-    wrap.querySelectorAll('.col').forEach(function (g) {
-      g.addEventListener('mousemove', function (e) {
-        var r = wrap.getBoundingClientRect();
-        tip.textContent = g.dataset.tip;
-        tip.hidden = false;
-        var x = Math.min(e.clientX - r.left + 12, r.width - tip.offsetWidth - 4);
-        tip.style.left = x + 'px';
-        tip.style.top = (e.clientY - r.top - 34) + 'px';
+  var listIo = null, mergeBound = false;
+  function initList() {
+    if (listIo) { listIo.disconnect(); listIo = null; }
+    var wrap = document.querySelector('.chart-wrap');
+    if (wrap) {
+      var tip = wrap.querySelector('.tooltip');
+      wrap.querySelectorAll('.col').forEach(function (g) {
+        g.addEventListener('mousemove', function (e) {
+          var r = wrap.getBoundingClientRect();
+          tip.textContent = g.dataset.tip;
+          tip.hidden = false;
+          var x = Math.min(e.clientX - r.left + 12, r.width - tip.offsetWidth - 4);
+          tip.style.left = x + 'px';
+          tip.style.top = (e.clientY - r.top - 34) + 'px';
+        });
+        g.addEventListener('mouseleave', function () { tip.hidden = true; });
       });
-      g.addEventListener('mouseleave', function () { tip.hidden = true; });
-    });
-  }
+    }
 
-  // Filter wirken sofort (Auswahl/Datum direkt, Suche nach kurzer Tipppause)
+    // Auswahlmodus: Themen zum Zusammenführen ankreuzen
+    var mf = document.getElementById('mergeform');
+    if (mf) {
+      var cnt = document.getElementById('mergecount'), btn = document.getElementById('mergebtn');
+      var upd = function () {
+        var n = document.querySelectorAll('input[name=ids][form=mergeform]:checked').length;
+        cnt.textContent = n;
+        btn.disabled = n < 2;
+        btn.textContent = n >= 2 ? n + ' Themen zusammenführen' : 'Zusammenführen';
+        mf.hidden = n === 0;
+      };
+      if (!mergeBound) {                              // nur einmal, überlebt das Austauschen der Liste
+        mergeBound = true;
+        document.addEventListener('change', function (e) {
+          if (e.target.matches('input[name=ids]')) {
+            e.target.closest('li').classList.toggle('picked', e.target.checked);
+            if (window.nnignMergeUpd) window.nnignMergeUpd();
+          }
+        });
+      }
+      window.nnignMergeUpd = upd;
+      document.getElementById('mergeclear').addEventListener('click', function () {
+        document.querySelectorAll('input[name=ids]:checked').forEach(function (c) {
+          c.checked = false; c.closest('li').classList.remove('picked');
+        });
+        upd();
+      });
+      mf.addEventListener('submit', function (e) {
+        var n = document.querySelectorAll('input[name=ids][form=mergeform]:checked').length;
+        if (!confirm(n + ' Themen zu einem zusammenführen?')) e.preventDefault();
+      });
+    }
+
+    // Nachladen beim Scrollen
+    var list = document.getElementById('topics'), more = document.getElementById('more');
+    if (list && more && 'IntersectionObserver' in window) {
+      var url = more.dataset.url, busy = false;
+      more.innerHTML = '<span class="muted small">weitere Themen werden geladen …</span>';
+      var seen = {};
+      list.querySelectorAll('li[data-id]').forEach(function (li) { seen[li.dataset.id] = 1; });
+      var io = new IntersectionObserver(function (entries) {
+        if (!entries[0].isIntersecting || busy || !url) return;
+        busy = true;
+        fetch(url, {credentials: 'same-origin'}).then(function (r) {
+          url = r.headers.get('X-More') || '';
+          return r.text();
+        }).then(function (html) {
+          var tmp = document.createElement('ul');
+          tmp.innerHTML = html;
+          Array.prototype.slice.call(tmp.children).forEach(function (li) {
+            if (!seen[li.dataset.id]) { seen[li.dataset.id] = 1; list.appendChild(li); }
+          });
+          if (!url) { io.disconnect(); more.innerHTML = '<span class="muted small">Alle Themen geladen.</span>'; }
+        }).catch(function () {
+          more.innerHTML = '<a href="#" class="muted small">Laden fehlgeschlagen – erneut versuchen</a>';
+          more.querySelector('a').onclick = function (e) { e.preventDefault(); busy = false; io.unobserve(more); io.observe(more); };
+        }).finally(function () { busy = false; });
+      }, {rootMargin: '600px 0px'});
+      io.observe(more);
+      listIo = io;
+    }
+  }
+  initList();
+
+  // Filter wirken sofort (Auswahl/Datum direkt, Suche nach kurzer Tipppause). Die Liste wird im Hintergrund
+  // neu geladen und ausgetauscht – das Suchfeld behält Fokus und Cursor.
   var form = document.getElementById('filters');
   if (form) {
-    var q = form.querySelector('input[name=q]'), timer = null, last = q ? q.value : '';
-    var go = function (keepFocus) {
-      try { if (keepFocus) sessionStorage.setItem('nnign-focus-q', '1'); } catch (e) {}
-      // leere Felder nicht in die Adresse übernehmen
-      form.querySelectorAll('input, select').forEach(function (el) { if (!el.value) el.disabled = true; });
-      form.submit();
+    var q = form.querySelector('input[name=q]'), timer = null, last = q ? q.value : '', seq = 0, ctrl = null;
+    var urlOf = function () {
+      var p = new URLSearchParams();
+      new FormData(form).forEach(function (v, k) { if (v) p.append(k, v); });
+      var s = p.toString();
+      return form.getAttribute('action') + (s ? '?' + s : '');
     };
-    window.addEventListener('pageshow', function () {   // Zurück-Taste: Felder wieder freigeben
-      form.querySelectorAll('[disabled]').forEach(function (el) { el.disabled = false; });
-    });
+    var swap = function (doc) {
+      var cur = form.parentNode, fresh = doc.querySelector('main');
+      if (!fresh) return false;
+      Array.prototype.slice.call(cur.children).forEach(function (el) {
+        if (el !== form && el.id !== 'activity') cur.removeChild(el);
+      });
+      var before = true;
+      Array.prototype.slice.call(fresh.children).forEach(function (el) {
+        if (el.id === 'filters') { before = false; return; }
+        if (el.id === 'activity') return;
+        var n = document.importNode(el, true);
+        if (before) cur.insertBefore(n, form); else cur.appendChild(n);
+      });
+      // versteckte Felder (Jahr, Auswahlmodus) angleichen
+      var nf = doc.getElementById('filters');
+      form.querySelectorAll('input[type=hidden]').forEach(function (el) { el.remove(); });
+      if (nf) nf.querySelectorAll('input[type=hidden]').forEach(function (el) {
+        form.insertBefore(document.importNode(el, true), form.querySelector('select[name=order]'));
+      });
+      return true;
+    };
+    var go = function () {
+      var url = urlOf(), my = ++seq;
+      if (ctrl) ctrl.abort();
+      ctrl = 'AbortController' in window ? new AbortController() : null;
+      form.classList.add('loading');
+      fetch(url, {credentials: 'same-origin', signal: ctrl ? ctrl.signal : undefined}).then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.text();
+      }).then(function (html) {
+        if (my !== seq) return;
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        if (!swap(doc)) { location.href = url; return; }
+        history.replaceState(null, '', url);
+        if (q) last = q.value;
+        initList();
+      }).catch(function (e) {
+        if (e && e.name === 'AbortError') return;
+        location.href = url;                           // Notfall: klassisch laden
+      }).finally(function () { if (my === seq) form.classList.remove('loading'); });
+    };
+    form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(timer); go(); });
     form.querySelectorAll('select, input[type=date]').forEach(function (el) {
-      el.addEventListener('change', function () { go(false); });
+      el.addEventListener('change', go);
     });
     if (q) {
       q.addEventListener('input', function () {
         clearTimeout(timer);
-        timer = setTimeout(function () { if (q.value.trim() !== last.trim()) go(true); }, 500);
+        timer = setTimeout(function () { if (q.value.trim() !== last.trim()) go(); }, 400);
       });
-      try {
-        if (sessionStorage.getItem('nnign-focus-q')) {
-          sessionStorage.removeItem('nnign-focus-q');
-          q.focus();
-          q.setSelectionRange(q.value.length, q.value.length);
-        }
-      } catch (e) {}
     }
-  }
-
-  // Auswahlmodus: Themen zum Zusammenführen ankreuzen
-  var mf = document.getElementById('mergeform');
-  if (mf) {
-    var cnt = document.getElementById('mergecount'), btn = document.getElementById('mergebtn');
-    var upd = function () {
-      var n = document.querySelectorAll('input[name=ids][form=mergeform]:checked').length;
-      cnt.textContent = n;
-      btn.disabled = n < 2;
-      btn.textContent = n >= 2 ? n + ' Themen zusammenführen' : 'Zusammenführen';
-      mf.hidden = n === 0;
-    };
-    document.addEventListener('change', function (e) {
-      if (e.target.matches('input[name=ids]')) {
-        e.target.closest('li').classList.toggle('picked', e.target.checked);
-        upd();
-      }
-    });
-    document.getElementById('mergeclear').addEventListener('click', function () {
-      document.querySelectorAll('input[name=ids]:checked').forEach(function (c) {
-        c.checked = false; c.closest('li').classList.remove('picked');
-      });
-      upd();
-    });
-    mf.addEventListener('submit', function (e) {
-      var n = document.querySelectorAll('input[name=ids][form=mergeform]:checked').length;
-      if (!confirm(n + ' Themen zu einem zusammenführen?')) e.preventDefault();
-    });
-  }
-
-  // Nachladen beim Scrollen
-  var list = document.getElementById('topics'), more = document.getElementById('more');
-  if (list && more && 'IntersectionObserver' in window) {
-    var url = more.dataset.url, busy = false;
-    more.innerHTML = '<span class="muted small">weitere Themen werden geladen …</span>';
-    var seen = {};
-    list.querySelectorAll('li[data-id]').forEach(function (li) { seen[li.dataset.id] = 1; });
-    var io = new IntersectionObserver(function (entries) {
-      if (!entries[0].isIntersecting || busy || !url) return;
-      busy = true;
-      fetch(url, {credentials: 'same-origin'}).then(function (r) {
-        url = r.headers.get('X-More') || '';
-        return r.text();
-      }).then(function (html) {
-        var tmp = document.createElement('ul');
-        tmp.innerHTML = html;
-        Array.prototype.slice.call(tmp.children).forEach(function (li) {
-          if (!seen[li.dataset.id]) { seen[li.dataset.id] = 1; list.appendChild(li); }
-        });
-        if (!url) { io.disconnect(); more.innerHTML = '<span class="muted small">Alle Themen geladen.</span>'; }
-      }).catch(function () {
-        more.innerHTML = '<a href="#" class="muted small">Laden fehlgeschlagen – erneut versuchen</a>';
-        more.querySelector('a').onclick = function (e) { e.preventDefault(); busy = false; io.unobserve(more); io.observe(more); };
-      }).finally(function () { busy = false; });
-    }, {rootMargin: '600px 0px'});
-    io.observe(more);
   }
 
   // Live-Anzeige laufender Abrufe
