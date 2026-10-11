@@ -83,8 +83,8 @@
     <dt>Erfassungszeitraum</dt><dd>{{ period.since|d }} bis {{ period.until|d if period.until else 'laufend' }}
       <span class="origin {{ period.origin }}">{{ 'Standard vom Erststart' if period.origin == 'default' else period.origin }}</span></dd>
     <dt>Vorhandene Daten</dt><dd>{{ period.data_n }} Meldungen{% if period.data_n %}, {{ period.data_from|d }} bis {{ period.data_to|d }}{% endif %}</dd>
-    <dt>Historie-Abruf</dt><dd>{{ st.backfill.percent }} % erledigt ({{ st.backfill.done }} / {{ st.backfill.total }} Aufgaben) ·
-      {{ 'läuft' if backfill_enabled else 'angehalten' }}</dd>
+    <dt>Historie-Abruf</dt><dd>{% if st.backfill.state == 'fertig' %}abgeschlossen ({{ st.backfill.total }} Abrufe){% else %}{{ st.backfill.percent }} % erledigt,
+      noch {{ st.backfill.open }} von {{ st.backfill.total }} offen · {{ st.backfill.state_text }}{% endif %}</dd>
   </dl>
 
   <div class="grid2">

@@ -649,8 +649,23 @@ def backfill_progress() -> dict:
         "SUM(t.status='fehler') fehler, SUM(t.status='übersprungen') skipped, SUM(t.relevant) relevant, "
         "MIN(CASE WHEN t.status='ok' AND t.method!='wayback_index' THEN t.period_start END) earliest "
         "FROM backfill_tasks t LEFT JOIN sources s ON s.id=t.source_id GROUP BY s.name, t.method ORDER BY s.name")
-    return {"counts": counts, "total": total, "done": done,
-            "percent": round(100 * done / total, 1) if total else 0.0,
+    open_n = counts.get("offen", 0)
+    pct = round(100 * done / total, 1) if total else 0.0
+    if open_n and pct >= 100:
+        pct = 99.9                       # nie „100 %“ anzeigen, solange noch etwas offen ist
+    if not total:
+        state, text = "leer", "noch nichts eingeplant"
+    elif not open_n:
+        state, text = "fertig", "abgeschlossen"
+    elif not config.get("backfill_enabled"):
+        state, text = "angehalten", "angehalten"
+    elif STATUS.get("backfill"):
+        state, text = "aktiv", STATUS["backfill"].get("phase", "läuft")
+    else:
+        state, text = "wartet", "aktiv – nächster Durchgang in Kürze"
+    return {"counts": counts, "total": total, "done": done, "open": open_n, "ok": counts.get("ok", 0),
+            "failed": counts.get("fehler", 0), "skipped": counts.get("übersprungen", 0),
+            "percent": pct, "state": state, "state_text": text,
             "per_source": [dict(r) for r in per_method]}
 
 

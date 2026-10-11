@@ -318,3 +318,5 @@ details.setgroup[open] > summary { border-bottom: 1px solid var(--line); margin-
 .secret-state { font-size: 13px; padding: 6px 0; }
 @media (max-width: 600px) { .admin-head { position: static; } table.bg .bg-name { white-space: normal; } }
 @media (max-width: 600px) { .savebar { padding-right: 64px; } }
+.pill.done { border-color: var(--ok); color: var(--ok); }
+.tile h3 .pill { margin-left: 6px; font-weight: 400; }

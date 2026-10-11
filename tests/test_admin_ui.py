@@ -94,3 +94,28 @@ def test_zero_values_survive_settings_form(env):
         assert d["ok"] and config.get("page_size") == 40
     finally:
         c.__exit__(None, None, None)
+
+
+def test_backfill_state_finished_vs_running(env):
+    from app import config, db, pipeline
+    setup_world(env)
+    pipeline.run_scan("initial")
+    config.set("backfill_enabled", True)
+    p = pipeline.backfill_progress()
+    assert p["open"] and p["state"] == "wartet" and p["percent"] < 100
+    with db.tx() as conn:                                  # bis auf eine Aufgabe erledigt
+        first = conn.execute("SELECT MIN(id) i FROM backfill_tasks").fetchone()["i"]
+        conn.execute("UPDATE backfill_tasks SET status='ok' WHERE id!=?", (first,))
+    p = pipeline.backfill_progress()
+    assert p["open"] == 1 and p["percent"] < 100 and p["state"] != "fertig"
+    with db.tx() as conn:
+        conn.execute("UPDATE backfill_tasks SET status='fehler' WHERE id=?", (first,))
+    p = pipeline.backfill_progress()
+    assert p["state"] == "fertig" and p["percent"] == 100 and p["failed"] == 1
+    c = _admin()
+    try:
+        t = c.get("/fragment/admin-status").text
+        assert "abgeschlossen" in t and "1 fehlgeschlagen" in t and "fehlgeschlagene wiederholen" in t
+        assert "· läuft" not in t and "Anhalten" not in t
+    finally:
+        c.__exit__(None, None, None)

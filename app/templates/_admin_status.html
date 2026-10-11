@@ -8,11 +8,19 @@
     <div class="actions"><form method="post" action="/admin/scan"><button>Jetzt aktualisieren</button></form></div>
   </div>
   <div class="tile">
-    <h3>Historie-Abruf</h3>
-    <div class="bar"><span style="width: {{ st.backfill.percent }}%"></span></div>
-    <p>{{ ('%g'|format(st.backfill.percent)).replace('.', ',') }} % · {{ st.backfill.done }} von {{ st.backfill.total }} Abrufen ·
-      {% if not backfill_enabled %}<strong>angehalten</strong>{% elif st.backfill_running %}<span class="spinner inline"></span> {{ st.backfill_running.phase }}{% else %}läuft{% endif %}</p>
-    <div class="actions"><form method="post" action="/admin/backfill/toggle"><button class="secondary">{{ 'Anhalten' if backfill_enabled else 'Fortsetzen' }}</button></form></div>
+    {% set bf = st.backfill %}
+    <h3>Historie-Abruf {% if bf.state == 'fertig' %}<span class="pill done">abgeschlossen</span>{% elif bf.state == 'angehalten' %}<span class="pill offer">angehalten</span>{% elif bf.state in ('aktiv', 'wartet') %}<span class="pill wait">aktiv</span>{% endif %}</h3>
+    <div class="bar"><span style="width: {{ bf.percent }}%"></span></div>
+    {% if bf.state == 'leer' %}<p>Noch keine Abrufe eingeplant.</p>
+    {% elif bf.state == 'fertig' %}<p>Alle {{ bf.total }} Abrufe des Erfassungszeitraums erledigt
+      ({{ bf.ok }} erfolgreich{% if bf.failed %}, {{ bf.failed }} fehlgeschlagen{% endif %}{% if bf.skipped %}, {{ bf.skipped }} übersprungen{% endif %}).
+      <span class="muted small">Wird der Zeitraum erweitert oder eine Quelle ergänzt, plant nnign neue Abrufe automatisch ein.</span></p>
+    {% else %}<p>{{ ('%g'|format(bf.percent)).replace('.', ',') }} % · noch {{ bf.open }} von {{ bf.total }} Abrufen offen<br>
+      {% if bf.state == 'aktiv' %}<span class="spinner inline"></span>{% endif %}{{ bf.state_text }}</p>{% endif %}
+    <div class="actions">
+      {% if bf.state != 'fertig' and bf.state != 'leer' %}<form method="post" action="/admin/backfill/toggle"><button class="secondary">{{ 'Anhalten' if backfill_enabled else 'Fortsetzen' }}</button></form>{% endif %}
+      {% if bf.failed %}<form method="post" action="/admin/backfill/reset"><button class="secondary">{{ bf.failed }} fehlgeschlagene wiederholen</button></form>{% endif %}
+    </div>
   </div>
   <div class="tile">
     <h3>Datenbestand</h3>
