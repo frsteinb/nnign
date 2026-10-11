@@ -224,7 +224,7 @@ def test_ui_shows_language_and_original(env):
         doc = c.get("/doku").text
         assert "Fremdsprachige Quellen und Übersetzung" in doc and "aktiv: LibreTranslate" in doc
         admin = c.get("/admin", auth=auth).text
-        assert "Übersetzung testen" in admin and "Englisch: 1 Meldungen, davon 1 übersetzt" in admin
+        assert "Übersetzung testen" in admin and "Englisch: 1 Meldungen, 1 übersetzt" in admin
         r = c.post("/admin/translate-test", auth=auth, headers={"origin": "http://testserver"})
         assert r.status_code == 200 and "OK (LibreTranslate)" in r.text
         sid = db.query_one("SELECT id FROM sources WHERE domain='localhost'")["id"]

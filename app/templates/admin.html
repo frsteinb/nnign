@@ -1,48 +1,59 @@
 {% extends "base.html" %}
 {% block title %}Admin – nnign{% endblock %}
 {% block content %}
-<h1>Administration</h1>
+<div class="admin-head">
+  <h1>Administration</h1>
+  <nav class="subnav" aria-label="Abschnitte">
+    <a href="#status">Status</a><a href="#dienste">Dienste</a><a href="#bewertung">Bewertung</a><a href="#daten">Daten</a>
+    <a href="#einstellungen">Einstellungen</a><a href="#quellen">Quellen</a><a href="#laeufe">Protokoll</a><a href="#geraete">Geräte</a>
+  </nav>
+</div>
 {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 {% set st = status %}
 {% include "_suggestions.html" %}
 
 <section class="card" id="status">
   <h2>Status</h2>
-  <dl class="facts">
-    <dt>Initial-Scan</dt><dd>{{ st.initial_done|dt if st.initial_done else 'noch nicht abgeschlossen' }}</dd>
-    <dt>Laufender Scan</dt><dd>{{ st.scan_running.kind ~ ': ' ~ st.scan_running.phase if st.scan_running else '–' }}</dd>
-    <dt>Nächster Scan</dt><dd>{{ st.next_scan_at|dt }}</dd>
-    <dt>Backfill</dt><dd>{{ st.backfill.percent }} % ({{ st.backfill.done }} / {{ st.backfill.total }}) –
-      {% for k, v in st.backfill.counts.items() %}{{ k }}: {{ v }}{{ ', ' if not loop.last }}{% endfor %}
-      {% if st.backfill_running %}<br><span class="pulse"></span> {{ st.backfill_running.phase }} ({{ st.backfill_running.range }}){% endif %}</dd>
-    <dt>Bewertung</dt><dd>{{ st.positive }} positiv · {{ st.neutral }} neutral · {{ st.negative }} negativ
-      {% if st.reclassify_running %}<br><span class="pulse"></span> Neu-Bewertung läuft …{% endif %}</dd>
-    <dt>KI-Analyse</dt><dd>{{ st.llm_status }} · heute {{ st.llm_calls_today }} Aufrufe</dd>
-    <dt>Übersetzung</dt><dd>{{ st.translate_status }}
-      {% for lang, f in st.foreign.items() %}<br>{{ languages.get(lang, lang) }}: {{ f.n }} Meldungen, davon {{ f.done or 0 }} übersetzt{% endfor %}</dd>
-    {% if st.pending_catchup or st.pending_reclassify %}<dt>Aktualisierung</dt><dd><span class="pulse"></span>
-      {% if st.pending_catchup %}{{ st.pending_catchup|length }} neue/geänderte Quelle(n) werden nachgeholt. {% endif %}
-      {% if st.pending_reclassify %}Neu-Bewertung nach Regel-Update steht an.{% endif %}</dd>{% endif %}
-    <dt>Themen / Meldungen</dt><dd>{{ st.topics }} / {{ st.articles }}</dd>
-  </dl>
-  <div class="row">
-    <form method="post" action="/admin/scan"><button>Jetzt aktualisieren</button></form>
-    <form method="post" action="/admin/llm-test"><button>KI-Verbindung testen</button></form>
-    <form method="post" action="/admin/llm-models"><button>Verfügbare KI-Modelle anzeigen</button></form>
-    <form method="post" action="/admin/translate-test"><button>Übersetzung testen</button></form>
-    {% if st.foreign %}<form method="post" action="/admin/translate-pending"><button>Jetzt nachübersetzen</button></form>{% endif %}
-    <form method="post" action="/admin/reclassify"><button {{ 'disabled' if st.reclassify_running }}>Bewertungen neu berechnen</button></form>
-    <a class="button" href="/?auswahl=1">Themen auswählen &amp; zusammenführen</a>
-    <form method="post" action="/admin/regroup" onsubmit="return confirm('Alle automatisch gebildeten Themen neu bündeln?')"><button>Themen neu bündeln</button></form>
+  <div id="admin-status" data-poll="/fragment/admin-status">{% include "_admin_status.html" %}</div>
+</section>
+
+<section class="card" id="dienste">
+  <h2>Dienste</h2>
+  <p class="muted small">Die Tests verwenden die <em>gespeicherten</em> Einstellungen; das Ergebnis erscheint direkt am Knopf.</p>
+  <div class="tiles">
+    <div class="tile">
+      <h3>KI (Sprachmodell)</h3>
+      <p class="small">{{ llm_name }}{% if st.llm_calls_today %} · heute {{ st.llm_calls_today }} Aufrufe{% endif %}</p>
+      <div class="actions">
+        <form method="post" action="/admin/llm-test"><button>Verbindung testen</button></form>
+        <form method="post" action="/admin/llm-models"><button class="secondary">Verfügbare Modelle</button></form>
+        <a class="small" href="#g-KI" data-open-group="KI">Einstellungen</a>
+      </div>
+    </div>
+    <div class="tile">
+      <h3>Übersetzung</h3>
+      <p class="small">{{ translate_name }}
+        {% for lang, f in st.foreign.items() %}<br>{{ languages.get(lang, lang) }}: {{ f.n }} Meldungen, {{ f.done or 0 }} übersetzt{% endfor %}</p>
+      <div class="actions">
+        <form method="post" action="/admin/translate-test"><button>Übersetzung testen</button></form>
+        {% if st.foreign %}<form method="post" action="/admin/translate-pending"><button class="secondary">Jetzt nachübersetzen</button></form>{% endif %}
+        <a class="small" href="#g-Übersetzung" data-open-group="Übersetzung">Einstellungen</a>
+      </div>
+    </div>
+    <div class="tile">
+      <h3>Zero-Shot-Klassifikation</h3>
+      <p class="small">{{ zs_name }}</p>
+      <div class="actions">
+        <form method="post" action="/admin/zeroshot-test"><button>Zero-Shot testen</button></form>
+        <a class="small" href="#g-Bewertungsverfahren" data-open-group="Bewertungsverfahren">Einstellungen</a>
+      </div>
+    </div>
   </div>
-  <p class="muted small">„Jetzt aktualisieren“ ruft sofort alle Quellen ab (sonst alle {{ groups['Zeitplan'][0].value }} h).
-    „Bewertungen neu berechnen“ wendet geänderte Bewertungsregeln auf alle vorhandenen Meldungen an.
-    „Themen neu bündeln“ ordnet alle Meldungen automatisch gebildeter Themen neu zu, z. B. nach geänderter Ähnlichkeitsschwelle.</p>
 </section>
 
 <section class="card" id="bewertung">
   <h2>Bewertungsverfahren</h2>
-  <p class="muted small">Gewählt: <strong>{{ engines.choice }}</strong> (ändern unter <a href="#einstellungen">Einstellungen → Bewertungsverfahren</a>).
+  <p class="muted small">Gewählt: <strong>{{ engines.choice }}</strong> (<a href="#g-Bewertungsverfahren" data-open-group="Bewertungsverfahren">ändern</a>).
     Bei „auto“ bestimmt das beste verfügbare Verfahren die Tonalität: KI, sonst Zero-Shot, sonst lernendes Modell, sonst Regeln.
     {{ engines.manual }} Themen sind vom Admin bewertet und bleiben unverändert.</p>
   <div class="scroll"><table class="list">
@@ -53,12 +64,11 @@
         <td>{{ e.n }}</td><td class="small">{{ e.cost }}</td></tr>
     {% endfor %}</tbody>
   </table></div>
-  <div class="row">
-    <form method="post" action="/admin/learned-train"><button>Lernendes Modell jetzt trainieren</button></form>
-    <form method="post" action="/admin/zeroshot-test"><button>Zero-Shot testen</button></form>
+  <div class="actions">
+    <form method="post" action="/admin/learned-train"><button class="secondary">Lernendes Modell jetzt trainieren</button></form>
   </div>
   <details><summary>Verfahren mit eigenem Text vergleichen</summary>
-    <form method="post" action="/admin/classify-test" class="stack">
+    <form method="post" action="/admin/classify-test" class="stack" data-nav>
       <label>Titel <input name="title" required placeholder="z. B. Porsche senkt erneut die Renditeprognose"></label>
       <label>Teaser (optional) <textarea name="body" rows="2"></textarea></label>
       <button>Vergleichen</button>
@@ -154,9 +164,16 @@
   <h2>Einstellungen</h2>
   <p class="muted small">Herkunft: <em>default</em> = eingebaut, <em>env</em> = Umgebungsvariable, <em>admin</em> = hier gespeichert (hat Vorrang).
     API-Keys werden aus Sicherheitsgründen nur in der Datei <code>.env</code> eingetragen (danach Container neu starten: <code>docker compose up -d</code>); alles andere hier.</p>
-  <form method="post" action="/admin/settings" class="settings">
+  <div class="settings-tools">
+    <input type="search" id="settings-filter" placeholder="Einstellung suchen …" aria-label="Einstellung suchen">
+    <button type="button" class="link" data-groups="open">alle aufklappen</button>
+    <button type="button" class="link" data-groups="close">alle zuklappen</button>
+  </div>
+  <form method="post" action="/admin/settings" class="settings" id="settings-form">
     {% for group, items in groups.items() %}
-      <fieldset><legend>{{ group }}</legend>
+      {% set changed = items|selectattr('origin', 'equalto', 'admin')|list|length %}
+      <details class="setgroup" id="g-{{ group }}" data-group="{{ group }}">
+      <summary><strong>{{ group }}</strong> <span class="muted small">{{ items|length }} Einstellungen{% if changed %} · {{ changed }} angepasst{% endif %}</span></summary>
       {% for it in items %}{% set s = it.s %}
         <div class="setting">
           <label for="f-{{ s.key }}">{{ s.label }} <span class="origin {{ it.origin }}">{{ it.origin }}</span></label>
@@ -179,9 +196,9 @@
           {% if it.origin == 'admin' %}<button class="link" form="reset-{{ s.key }}">auf Standard</button>{% endif %}
         </div>
       {% endfor %}
-      </fieldset>
+      </details>
     {% endfor %}
-    <button type="submit">Einstellungen speichern</button>
+    <div class="savebar"><span class="dirty-hint muted small">Ungespeicherte Änderungen</span><button type="submit">Einstellungen speichern</button></div>
   </form>
   {% for group, items in groups.items() %}{% for it in items %}{% if it.origin == 'admin' %}
     <form id="reset-{{ it.s.key }}" method="post" action="/admin/settings/reset/{{ it.s.key }}"></form>
@@ -208,7 +225,7 @@
 </section>
 
 <section class="card" id="laeufe">
-  <h2>Letzte Scans</h2>
+  <h2>Protokoll (letzte Läufe)</h2>
   <div class="scroll"><table class="list">
     <thead><tr><th>#</th><th>Art</th><th>Start</th><th>Status</th><th>abgerufen</th><th>neu relevant</th><th>gespeichert</th><th>neue Themen</th><th>KI</th></tr></thead>
     <tbody>{% for r in runs %}

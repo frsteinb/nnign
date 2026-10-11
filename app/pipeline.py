@@ -335,6 +335,7 @@ def regroup() -> dict:
                 STATUS["regroup"]["done"] = min(len(moving), i + 200)
         after = db.query_one("SELECT COUNT(*) n FROM topics")["n"]
         log.info("Themen neu gebündelt: %d Meldungen, %d -> %d Themen", len(moving), before, after)
+        config.state_set("last_regroup", {"at": db.utcnow(), "articles": len(moving), "before": before, "after": after})
         return {"articles": len(moving), "before": before, "after": after}
     finally:
         STATUS["regroup"] = None
@@ -349,10 +350,10 @@ def _source_status(src_id: int, status: str, n: int) -> None:
 def reclassify() -> dict:
     """Regelbasierte Bewertung aller Meldungen neu berechnen (z. B. nach geänderten Regeln).
     KI-bewertete und manuell bearbeitete Themen behalten ihre Bewertung."""
-    STATUS["reclassify"] = "läuft"
     n_art = n_topic = 0
     try:
         rows = db.query("SELECT id, title, summary, lang, translated_by FROM articles")
+        STATUS["reclassify"] = {"done": 0, "total": len(rows), "phase": "Meldungen"}
         with _ingest_lock:
             for i in range(0, len(rows), 500):
                 with db.tx() as conn:
@@ -361,15 +362,19 @@ def reclassify() -> dict:
                         conn.execute("UPDATE articles SET sentiment_score=?, sentiment_detail=? WHERE id=?",
                                      (r.score, json.dumps(r.detail(), ensure_ascii=False), a["id"]))
                         n_art += 1
+                STATUS["reclassify"]["done"] = n_art
             ids = [r["id"] for r in db.query("SELECT id FROM topics WHERE locked=0 AND "
                                              "sentiment_origin IN ('lexikon', 'lernend')")]
+            STATUS["reclassify"] = {"done": 0, "total": len(ids), "phase": "Themen"}
             for i in range(0, len(ids), 500):
                 with db.tx() as conn:
                     for tid in ids[i:i + 500]:
                         topics.refresh(conn, tid)
                         n_topic += 1
+                STATUS["reclassify"]["done"] = n_topic
     finally:
         STATUS["reclassify"] = None
+    config.state_set("last_reclassify", {"at": db.utcnow(), "articles": n_art, "topics": n_topic})
     log.info("Neu bewertet: %d Meldungen, %d Themen", n_art, n_topic)
     return {"articles": n_art, "topics": n_topic}
 

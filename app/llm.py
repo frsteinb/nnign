@@ -176,6 +176,25 @@ def budget_left() -> int:
 _pause = {"until": 0.0, "reason": "", "fails": 0}
 
 
+class _LastProblem(logging.Handler):
+    """Merkt sich die letzte Warnung/Fehlermeldung, damit Tests im Admin-Bereich den Grund nennen können."""
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.msg = ""
+
+    def emit(self, record):
+        try:
+            self.msg = record.getMessage()[:300]
+        except Exception:
+            pass
+
+
+last_problem = _LastProblem()
+log.addHandler(last_problem)
+
+
+
 def pause(seconds: float, reason: str) -> None:
     _pause["until"] = time.time() + max(1.0, seconds)
     _pause["reason"] = reason
@@ -528,8 +547,12 @@ def test_connection() -> str:
     reason = missing()
     if reason:
         return f"Nicht nutzbar: {reason}."
+    blocked = blocked_reason()
+    if blocked:
+        return f"Derzeit nicht nutzbar: {blocked}."
+    last_problem.msg = ""
     res = analyze({"title": "Volkswagen meldet Rekordabsatz bei Elektroautos", "summary": "",
                    "source": "Test", "published": datetime.now(timezone.utc).isoformat()}, [])
     if res is None:
-        return f"Fehlgeschlagen ({provider_name()} · {model()}) – Details im Container-Log."
+        return f"Fehlgeschlagen ({provider_name()} · {model()}): {last_problem.msg or 'keine verwertbare Antwort'}"
     return f"OK ({provider_name()} · {model()}): {res.get('sentiment')} – {res.get('topic_title')}"

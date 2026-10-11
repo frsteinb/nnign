@@ -19,6 +19,10 @@ import httpx
 from . import config, llm
 
 log = logging.getLogger(__name__)
+from .llm import _LastProblem  # noqa: E402
+
+last_problem = _LastProblem()
+log.addHandler(last_problem)
 
 NAMES = {"libretranslate": "LibreTranslate", "deepl": "DeepL", "llm": "KI", "": ""}
 
@@ -193,5 +197,8 @@ def test_connection() -> str:
     p = provider()
     if not p:
         return describe()
+    last_problem.msg = ""
     out, used = translate_texts(["Volkswagen recalls 50,000 cars over airbag problems"], "en")
-    return f"OK ({NAMES[used]}): {out[0]}" if out else f"Fehlgeschlagen ({NAMES[p]}) – Details im Container-Log."
+    if out:
+        return f"OK ({NAMES[used]}): „Volkswagen recalls …“ → {out[0]}"
+    return f"Fehlgeschlagen ({NAMES[p]}): {paused_reason() or last_problem.msg or llm.last_problem.msg or 'keine Antwort'}"

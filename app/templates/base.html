@@ -52,6 +52,7 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(function () {}); });
 }
 </script>
+{% if is_admin(request) %}<script src="/static/admin.js?v={{ version }}" defer></script>{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>

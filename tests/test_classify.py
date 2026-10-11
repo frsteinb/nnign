@@ -168,7 +168,7 @@ def test_admin_engines_card_and_compare(env):
         page = c.get("/admin").text
         assert "Bewertungsverfahren" in page and "Zero-Shot-Klassifikation" in page and "HF_TOKEN" in page
         r = c.post("/admin/learned-train", headers=ORIGIN)
-        assert "Lernendes Modell trainiert" in r.text
+        assert "Trainiert:" in r.text
         r = c.post("/admin/classify-test", data={"title": "VW ruft Arteon wegen Airbag-Problemen zurück"},
                    headers=ORIGIN)
         assert r.status_code == 200 and "Lernendes Modell" in r.text and "negativ" in r.text

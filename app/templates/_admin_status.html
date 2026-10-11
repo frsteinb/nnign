@@ -1,0 +1,38 @@
+{% set st = status %}
+<div class="tiles">
+  <div class="tile">
+    <h3>Abruf</h3>
+    {% if st.scan_running %}<p><span class="spinner inline"></span> <strong>{{ st.scan_running.kind }}</strong>: {{ st.scan_running.phase }}</p>
+    {% elif not st.initial_done %}<p><span class="spinner inline"></span> Initial-Scan steht an</p>
+    {% else %}<p>Letzter Scan {{ st.last_scan_at|dt if st.last_scan_at else '–' }}<br>nächster {{ st.next_scan_at|dt }}</p>{% endif %}
+    <div class="actions"><form method="post" action="/admin/scan"><button>Jetzt aktualisieren</button></form></div>
+  </div>
+  <div class="tile">
+    <h3>Historie-Abruf</h3>
+    <div class="bar"><span style="width: {{ st.backfill.percent }}%"></span></div>
+    <p>{{ ('%g'|format(st.backfill.percent)).replace('.', ',') }} % · {{ st.backfill.done }} von {{ st.backfill.total }} Abrufen ·
+      {% if not backfill_enabled %}<strong>angehalten</strong>{% elif st.backfill_running %}<span class="spinner inline"></span> {{ st.backfill_running.phase }}{% else %}läuft{% endif %}</p>
+    <div class="actions"><form method="post" action="/admin/backfill/toggle"><button class="secondary">{{ 'Anhalten' if backfill_enabled else 'Fortsetzen' }}</button></form></div>
+  </div>
+  <div class="tile">
+    <h3>Datenbestand</h3>
+    <p><strong>{{ st.topics }}</strong> Themen · <strong>{{ st.articles }}</strong> Meldungen<br>
+      <span class="dot pos"></span>{{ st.positive }} <span class="dot neu"></span>{{ st.neutral }} <span class="dot neg"></span>{{ st.negative }}</p>
+    <div class="actions"><a class="button secondary" href="/?auswahl=1">Themen zusammenführen</a></div>
+  </div>
+</div>
+
+<h3 class="sub">Hintergrundarbeiten</h3>
+<table class="list bg">
+  <tbody>{% for r in bg %}
+    <tr class="st-{{ r.state }}">
+      <td class="bg-name">{% if r.state == 'run' %}<span class="spinner inline"></span>{% elif r.state == 'wait' %}<span class="pill wait">steht an</span>{% elif r.state == 'offer' %}<span class="pill offer">Vorschlag</span>{% else %}<span class="pill idle">bereit</span>{% endif %}
+        <strong>{{ r.name }}</strong></td>
+      <td>{% if r.pct is not none %}<div class="bar"><span style="width: {{ r.pct }}%"></span></div>{% endif %}<span class="small">{{ r.text }}</span></td>
+    </tr>
+  {% endfor %}</tbody>
+</table>
+<div class="actions">
+  <form method="post" action="/admin/reclassify"><button class="secondary" {{ 'disabled' if st.reclassify_running }}>Bewertungen neu berechnen</button></form>
+  <form method="post" action="/admin/regroup" onsubmit="return confirm('Alle automatisch gebildeten Themen neu bündeln?')"><button class="secondary">Themen neu bündeln</button></form>
+</div>

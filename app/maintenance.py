@@ -548,6 +548,89 @@ def zeroshot_batch(max_calls: int = 30) -> int:
     return done
 
 
+# ---------------------------------------------------------------------------------- Status für den Admin
+
+def _pct(done, total):
+    return round(100 * done / total) if total else None
+
+
+def background_status() -> list[dict]:
+    """Stand aller Hintergrundarbeiten (Nachjustierung, Neuberechnung, Nachbewertung …) für den Admin-Status."""
+    from . import pipeline
+    rows = []
+    st = pipeline.STATUS
+
+    rg, last = st.get("regroup"), config.state_get("last_regroup")
+    row = {"name": "Themen-Bündelung", "state": "idle", "pct": None,
+           "text": (f"zuletzt {last['at'][:16].replace('T', ' ')}: {last['articles']} Meldungen, "
+                    f"{last['before']} → {last['after']} Themen") if last else "noch nicht neu gebündelt"}
+    if rg:
+        row.update(state="run", pct=_pct(rg.get("done", 0), rg.get("total", 0)),
+                   text=f"läuft: {rg.get('done', 0)} von {rg.get('total', 0)} Meldungen neu zugeordnet")
+    elif config.state_get("pending_regroup"):
+        row.update(state="wait", text="steht an – startet in Kürze")
+    elif any(x["id"] == "regroup" for x in suggestions()):
+        row.update(state="offer", text="als Vorschlag oben – wartet auf Bestätigung")
+    rows.append(row)
+
+    rc, last = st.get("reclassify"), config.state_get("last_reclassify")
+    row = {"name": "Neuberechnung der Bewertungen", "state": "idle", "pct": None,
+           "text": (f"zuletzt {last['at'][:16].replace('T', ' ')}: {last['articles']} Meldungen, {last['topics']} Themen")
+           if last else "noch nicht neu berechnet"}
+    if rc:
+        row.update(state="run", pct=_pct(rc.get("done", 0), rc.get("total", 0)),
+                   text=f"läuft: {rc.get('phase', '')} {rc.get('done', 0)} von {rc.get('total', 0)}")
+    elif config.state_get("pending_reclassify"):
+        row.update(state="wait", text="steht an – startet in Kürze")
+    rows.append(row)
+
+    if llm.available() and classify.allowed("llm"):
+        kinds = {"pending": "nach Ausfall/Limit", "grown": "stark gewachsen", "recent": "letzte 30 Tage",
+                 "old": "ältere (freigegeben)", "fp": "neues Modell/Prompt"}
+        counts = {k: _rerate_count(k) for k in rerate_kinds()}
+        open_n = sum(counts.values())
+        limit = int(config.get("llm_max_calls_per_day"))
+        share = int(limit * float(config.get("llm_rerate_share")))
+        parts = [f"{n} {kinds[k]}" for k, n in counts.items() if n]
+        text = (f"{open_n} Themen offen ({', '.join(parts)})" if open_n else "nichts offen") +                f" · heute {llm.calls_today()} von {limit} KI-Aufrufen, Nachbewertung bis {share}"
+        state = "idle" if not open_n else "wait"
+        if STATUS.get("rerate"):
+            state, text = "run", f"läuft: „{STATUS['rerate']['title']}“ · " + text
+        elif open_n and llm.blocked_reason():
+            text += f" · {llm.blocked_reason()}"
+        elif open_n and not _share_ok():
+            text += " · Anteil für heute ausgeschöpft, weiter ab Mitternacht (UTC)"
+        if config.state_get("llm_rerate_old") is None and _rerate_count("old"):
+            text += f" · {_rerate_count('old')} ältere Themen nicht freigegeben"
+        rows.append({"name": "KI-Nachbewertung", "state": state, "pct": None, "text": text})
+
+    if classify.zs_configured():
+        n = zeroshot_open()
+        state = "run" if STATUS.get("zeroshot") else ("wait" if n else "idle")
+        text = (f"{n} Themen offen · " if n else "nichts offen · ") + classify.zs_status()
+        if not zeroshot_active():
+            text = "nicht aktiv (anderes Bewertungsverfahren gewählt bzw. KI vorhanden) · " + classify.zs_status()
+            state = "idle"
+        rows.append({"name": "Zero-Shot-Bewertung", "state": state, "pct": None, "text": text})
+
+    rows.append({"name": "Lernendes Modell", "state": "idle", "pct": None, "text": classify.learned_status()})
+
+    n_tr = db.query_one("SELECT COUNT(*) n FROM articles WHERE lang!='de' AND translated_by='' AND relevant=1")["n"]
+    if n_tr or st.get("translate"):
+        rows.append({"name": "Nachübersetzung", "state": "run" if st.get("translate") else (
+            "wait" if translate.provider() else "idle"), "pct": None,
+            "text": f"{n_tr} Meldungen unübersetzt · {translate.describe()}"})
+    hubs_q = config.state_get("pending_hubs") or []
+    catch = config.state_get("pending_catchup") or []
+    if hubs_q:
+        rows.append({"name": "Übersichtsseiten", "state": "wait", "pct": None,
+                     "text": f"{len(hubs_q)} werden aufgelöst"})
+    if catch:
+        rows.append({"name": "Neue Quellen", "state": "wait", "pct": None,
+                     "text": f"{len(catch)} Quelle(n) werden nachgeholt"})
+    return rows
+
+
 # ---------------------------------------------------------------------------------- Arbeit
 
 _last = {"check": 0.0, "translate": 0.0, "rerate": 0.0, "zeroshot": 0.0, "train": 0.0}

@@ -28,7 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.8.1"
+VERSION = "1.9.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -384,9 +384,11 @@ def activity() -> list[dict]:
             out.append({"kind": "backfill", "title": "Historie wird abgerufen", "phase": phase,
                         "detail": " · ".join(steps), "pct": prog["percent"]})
     if st.get("reclassify") or config.state_get("pending_reclassify"):
+        rc = st.get("reclassify") or {}
         out.append({"kind": "reclassify", "title": "Bewertungen werden neu berechnet",
-                    "phase": "nach geänderten Regeln" if not st.get("reclassify") else "läuft …", "detail": "",
-                    "pct": None})
+                    "phase": f"{rc.get('phase', '')}: {rc.get('done', 0)} von {rc['total']}" if rc.get("total")
+                    else "nach geänderten Regeln oder Verfahren", "detail": "",
+                    "pct": _pct(rc.get("done", 0), rc["total"]) if rc.get("total") else None})
     if st.get("regroup") or config.state_get("pending_regroup"):
         rg = st.get("regroup") or {}
         out.append({"kind": "regroup", "title": "Themen werden neu gebündelt",
@@ -639,16 +641,36 @@ TEXT_DEFAULTS = {"llm_system_prompt": prompts.DEFAULT_SYSTEM_PROMPT,
                  "llm_instructions": prompts.DEFAULT_INSTRUCTIONS}
 
 
-def back(msg: str = "", anchor: str = "") -> RedirectResponse:
-    url = "/admin" + (("?" + urlencode({"msg": msg})) if msg else "") + (f"#{anchor}" if anchor else "")
+def back(msg: str = "", anchor: str = "", info: bool = False) -> RedirectResponse:
+    """Zurück in den Admin-Bereich. Aus der Seite heraus (fetch) wird daraus eine JSON-Antwort, die direkt am
+    Knopf angezeigt wird (siehe Middleware); info=True: nur Auskunft, Seite nicht neu laden."""
+    q = {"msg": msg} if msg else {}
+    if info:
+        q["info"] = "1"
+    url = "/admin" + (("?" + urlencode(q)) if q else "") + (f"#{anchor}" if anchor else "")
     return RedirectResponse(url, status_code=303)
+
+
+def _is_fetch(request: Request) -> bool:
+    return request.headers.get("x-requested-with") == "fetch"
+
+
+def respond(request: Request, msg: str, ok: bool = True, info: bool = True, **extra):
+    """Antwort einer Admin-Aktion: JSON für Aufrufe aus der Seite, sonst Umleitung mit Meldung."""
+    if _is_fetch(request):
+        return JSONResponse({"ok": ok, "msg": msg, "reload": not info, **extra})
+    return back(msg, info=info)
 
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin(request: Request, msg: str = "", _=Depends(require_admin)):
     groups: dict[str, list] = {}
     for s in config.SETTINGS:
-        val = config.get(s.key) or TEXT_DEFAULTS.get(s.key, "")
+        val = config.get(s.key)
+        if s.key in TEXT_DEFAULTS and not val:
+            val = TEXT_DEFAULTS[s.key]
+        if val is None:
+            val = ""
         if s.type == "list":
             val = "\n".join(val)
         if s.type == "secret":
@@ -672,6 +694,8 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
         "current_session": (auth.current_session(request) or {"id": None})["id"],
         "session_days": auth.LIFETIME_DAYS, "session_max": auth.MAX_SESSIONS,
         "engines": engines_info(),
+        "bg": maintenance.background_status(),
+        "llm_name": llm.describe(), "translate_name": translate.describe(), "zs_name": classify.zs_status(),
     })
 
 
@@ -699,7 +723,7 @@ async def admin_settings(request: Request, _=Depends(require_admin)):
         try:
             parsed = config.parse_value(s, new)
         except (ValueError, TypeError):
-            return back(f"Ungültiger Wert für „{s.label}“")
+            return respond(request, f"Ungültiger Wert für „{s.label}“: {new}", ok=False)
         if parsed != config.get(s.key):
             config.set(s.key, parsed)
             changed += 1
@@ -756,7 +780,7 @@ def admin_source_delete(sid: int, _=Depends(require_admin)):
 @app.post("/admin/scan")
 def admin_scan(_=Depends(require_admin)):
     pipeline.request_scan("manuell")
-    return back("Scan angestoßen – Fortschritt siehe Status")
+    return back("Scan gestartet – Fortschritt unter „Abruf“", info=True)
 
 
 @app.post("/admin/initial")
@@ -835,8 +859,20 @@ def admin_reclassify(_=Depends(require_admin)):
     if pipeline.STATUS.get("reclassify"):
         return back("Neu-Bewertung läuft bereits")
     threading.Thread(target=pipeline.reclassify, name="reclassify", daemon=True).start()
-    return back("Bewertungen werden neu berechnet (Regeln; KI- und manuell bewertete Themen bleiben). "
-                "Dauer: Sekunden bis wenige Minuten.")
+    return back("Neuberechnung gestartet (Regeln und lernendes Modell; KI- und manuell bewertete Themen bleiben) – "
+                "Fortschritt unter „Hintergrundarbeiten“", info=True)
+
+
+@app.get("/fragment/admin-status", response_class=HTMLResponse)
+def fragment_admin_status(request: Request, _=Depends(require_admin)):
+    """Live-Teil des Admin-Status (Abruf, Historie, Hintergrundarbeiten)."""
+    bg = maintenance.background_status()
+    resp = templates.TemplateResponse(request, "_admin_status.html", {"status": status_info(), "bg": bg,
+                                                                      "backfill_enabled": config.get("backfill_enabled")})
+    st = pipeline.STATUS
+    busy = any(r["state"] in ("run", "wait") for r in bg) or bool(st["scan"] or st["backfill"])
+    resp.headers["X-Busy"] = "1" if busy else "0"
+    return resp
 
 
 @app.post("/admin/suggestions/{sid}/run")
@@ -880,17 +916,19 @@ def engines_info() -> dict:
 
 
 @app.post("/admin/learned-train")
-def admin_learned_train(_=Depends(require_admin)):
+def admin_learned_train(request: Request, _=Depends(require_admin)):
     info = classify.train()
     if classify.allowed("lernend"):
         config.state_set("pending_reclassify", True)
     acc = f"{info['accuracy'] * 100:.0f} %" if info["accuracy"] is not None else "– (zu wenige Beispiele)"
-    return back(f"Lernendes Modell trainiert: {info['n']} Beispiele, Genauigkeit {acc}", "bewertung")
+    return respond(request, f"Trainiert: {info['n']} Beispiele, Genauigkeit {acc}. " + classify.learned_status(),
+                   info=False)
 
 
 @app.post("/admin/zeroshot-test")
-def admin_zeroshot_test(_=Depends(require_admin)):
-    return back("Zero-Shot-Test: " + classify.test_zeroshot(), "bewertung")
+def admin_zeroshot_test(request: Request, _=Depends(require_admin)):
+    msg = classify.test_zeroshot()
+    return respond(request, msg, ok=msg.startswith("OK"))
 
 
 @app.post("/admin/classify-test", response_class=HTMLResponse)
@@ -905,28 +943,32 @@ def admin_regroup(_=Depends(require_admin)):
     if pipeline.STATUS.get("regroup"):
         return back("Neu-Bündelung läuft bereits")
     threading.Thread(target=pipeline.regroup, name="regroup", daemon=True).start()
-    return back("Themen werden neu gebündelt (von Hand bearbeitete, gesperrte und KI-Themen bleiben). "
-                "Fortschritt auf der Startseite.")
+    return back("Neu-Bündelung gestartet (von Hand gebündelte, gesperrte und KI-Themen bleiben) – Fortschritt unter "
+                "„Hintergrundarbeiten“", info=True)
 
 
 @app.post("/admin/llm-models")
-def admin_llm_models(_=Depends(require_admin)):
+def admin_llm_models(request: Request, _=Depends(require_admin)):
     ids, err = llm.list_models()
     if err:
-        return back("Modelle: " + err, "einstellungen")
+        return respond(request, "Modelle: " + err, ok=False)
     text_models = [i for i in ids if not any(x in i for x in ("embed", "image", "tts", "audio", "vision", "aqa"))]
-    return back(f"{len(text_models)} Modelle bei {llm.provider_name()}: " + ", ".join(text_models[:40])
-                + (" …" if len(text_models) > 40 else "") + " – Namen in „Modell“ eintragen.", "einstellungen")
+    if _is_fetch(request):
+        return respond(request, f"{len(text_models)} Modelle bei {llm.provider_name()} – zum Übernehmen anklicken, "
+                       "dann speichern:", models=text_models[:80], target="f-llm_model")
+    return back(f"{len(text_models)} Modelle bei {llm.provider_name()}: " + ", ".join(text_models[:40]), info=True)
 
 
 @app.post("/admin/llm-test")
-def admin_llm_test(_=Depends(require_admin)):
-    return back("KI-Test: " + llm.test_connection(), "einstellungen")
+def admin_llm_test(request: Request, _=Depends(require_admin)):
+    msg = llm.test_connection()
+    return respond(request, msg, ok=msg.startswith("OK"))
 
 
 @app.post("/admin/translate-test")
-def admin_translate_test(_=Depends(require_admin)):
-    return back("Übersetzungs-Test: " + translate.test_connection(), "einstellungen")
+def admin_translate_test(request: Request, _=Depends(require_admin)):
+    msg = translate.test_connection()
+    return respond(request, msg, ok=msg.startswith("OK"))
 
 
 @app.post("/admin/translate-pending")
@@ -1008,6 +1050,22 @@ def admin_article_detach(article_id: int, _=Depends(require_admin)):
     return RedirectResponse(f"/thema/{new_id}" if new_id else "/", status_code=303)
 
 
+@app.middleware("http")
+async def fetch_actions(request: Request, call_next):
+    """Admin-Aktionen per fetch: Umleitungen in JSON umwandeln (Meldung am Knopf statt Seitensprung)."""
+    resp = await call_next(request)
+    if request.method == "POST" and _is_fetch(request) and resp.status_code in (302, 303):
+        from urllib.parse import parse_qs
+        loc = resp.headers.get("location", "")
+        parts = urlsplit(loc)
+        q = parse_qs(parts.query)
+        msg = (q.get("msg") or [""])[0]
+        if parts.path == "/admin":
+            return JSONResponse({"ok": True, "msg": msg, "reload": "info" not in q})
+        return JSONResponse({"ok": True, "msg": msg, "location": loc})
+    return resp
+
+
 @app.exception_handler(LoginRequired)
 async def login_required(request: Request, exc: LoginRequired):
     if _wants_html(request):
@@ -1072,6 +1130,8 @@ def admin_sessions_revoke_others(request: Request, _=Depends(require_admin)):
 
 @app.exception_handler(HTTPException)
 async def http_error(request: Request, exc: HTTPException):
+    if _is_fetch(request):
+        return JSONResponse({"ok": False, "msg": str(exc.detail)}, status_code=exc.status_code)
     if request.url.path.startswith("/api") or exc.status_code == 401:
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
     return HTMLResponse(f"<h1>{exc.status_code}</h1><p>{exc.detail}</p><p><a href='/'>Zur Übersicht</a></p>",
