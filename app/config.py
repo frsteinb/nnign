@@ -179,6 +179,9 @@ SETTINGS: list[Setting] = [
     Setting("gapfill_target_percent", "int", 80, "Zielniveau (% der aktuellen Lage)",
             "Ein Monat gilt als geschlossen, wenn er so viel Prozent der Meldungsdichte der letzten drei vollständigen "
             "Monate erreicht.", "Archiv / Backfill"),
+    Setting("hub_max_pages", "int", 30, "Folgeseiten je Übersichtsseite",
+            "Wie viele ältere Seiten („Seite 2“, „Ältere Artikel“ …) einer beobachteten Übersichtsseite der "
+            "Historie-Abruf höchstens lädt.", "Archiv / Backfill"),
     Setting("backfill_wayback_fallback", "bool", True, "Archivseiten notfalls über Wayback laden",
             "Wenn eine Archivseite direkt nicht erreichbar ist, wird der nächstgelegene Wayback-Schnappschuss versucht.",
             "Archiv / Backfill"),

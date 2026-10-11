@@ -21,14 +21,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, classify, config, db, gapfill, llm, maintenance, pipeline, prompts, sentiment, sources, topics, translate
+from . import auth, classify, config, db, gapfill, hubs, llm, maintenance, pipeline, prompts, sentiment, sources, topics, translate
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.16.0"
+VERSION = "1.17.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -720,6 +720,12 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
         "session_days": auth.LIFETIME_DAYS, "session_max": auth.MAX_SESSIONS,
         "engines": engines_info(),
         "jobs": maintenance.jobs(), "backends": maintenance.backends(), "states": maintenance.STATES,
+        "hub_rows": db.query(
+            "SELECT h.*, (SELECT COUNT(*) FROM backfill_tasks t WHERE t.method='hub_page' AND t.status='ok' AND "
+            "t.target LIKE h.url || '%') pages_done, (SELECT COUNT(*) FROM backfill_tasks t WHERE t.method='hub_page' "
+            "AND t.status='offen' AND t.target LIKE h.url || '%') pages_open FROM hub_pages h "
+            "ORDER BY h.watch DESC, h.relevant DESC, h.last_fetch DESC LIMIT 60"),
+        "hub_labels": hubs.WATCH_LABELS, "hub_watch_min": hubs.WATCH_MIN,
         "source_counts": {r["d"]: r["n"] for r in db.query(
             "SELECT source_domain d, COUNT(*) n FROM articles WHERE relevant=1 GROUP BY source_domain")},
         "llm_name": llm.describe(), "translate_name": translate.describe(), "zs_name": classify.zs_status(),
@@ -804,6 +810,25 @@ def admin_source_toggle(sid: int, _=Depends(require_admin)):
     with db.tx() as conn:
         conn.execute("UPDATE sources SET enabled=? WHERE id=?", (0 if row["enabled"] else 1, sid))
     return back(f"„{row['name']}“ {'deaktiviert' if row['enabled'] else 'aktiviert – wird automatisch nachgeholt'}")
+
+
+@app.post("/admin/hubs/watch")
+def admin_hub_watch(url: str = Form(...), watch: int = Form(2), _=Depends(require_admin)):
+    from .textutil import domain_matches
+    url = url.strip()
+    import re
+    if not re.match(r"^https?://[^/\s]+\.[^/\s]+", url):
+        return back("Bitte eine vollständige Adresse (https://…) angeben.", "uebersichtsseiten", info=True)
+    src = next((s for s in sources.all_sources() if domain_matches(url, s["domain"])), None)
+    if src is None:
+        return back("Zu dieser Adresse gibt es keine Quelle – bitte zuerst die Quelle (Domain) anlegen.",
+                    "uebersichtsseiten", info=True)
+    hubs.set_watch(url, 2 if watch > 0 else -1, src["domain"])
+    if watch > 0:
+        pipeline.request_scan("manuell")
+        return back(f"Übersichtsseite wird beobachtet ({src['name']}) – erster Abruf startet gleich, ältere Seiten "
+                    "folgen im Historie-Abruf.")
+    return back("Übersichtsseite wird nicht mehr beobachtet.")
 
 
 @app.post("/admin/sources/{sid}/delete")

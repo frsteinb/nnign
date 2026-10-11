@@ -81,8 +81,8 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
             continue
         if it.published > now + timedelta(hours=6):
             it.published = now
-        if hubs.is_hub(it.title, it.url):
-            if _depth == 0 and matcher.score(it.title, it.summary) > 0:
+        if it.extra.get("watched_hub") or hubs.is_hub(it.title, it.url):
+            if _depth == 0 and (it.extra.get("watched_hub") or matcher.score(it.title, it.summary) > 0):
                 hub_items.append(it)
             continue
         if matcher.score(it.title, it.summary) <= 0 and not (it.extra.get("hub_relevant")
@@ -232,22 +232,32 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
 
 
 def _expand_hubs(hub_items, ctx, allow_llm, http, max_age_days, progress, depth) -> None:
-    """Übersichtsseiten laden und ihre Artikel als eigene Meldungen verarbeiten (eine Ebene tief)."""
+    """Übersichtsseiten laden und ihre Artikel als eigene Meldungen verarbeiten. Verlinkte Unter-Übersichten mit
+    Konzernbezug werden eine Ebene tief mit aufgelöst; ergiebige Seiten werden künftig beobachtet."""
     if not hub_items or depth > 0:
         return
     own = http is None
     http = http or fetcher.Http()
+    matcher = Matcher.from_config()
     try:
         seen = set()
-        for hub in hub_items[:10]:
+        queue = [(h, 0) for h in [h for h in hub_items if h.extra.get("watched_hub")] +
+                 [h for h in hub_items if not h.extra.get("watched_hub")][:10]]
+        while queue:
+            hub, level = queue.pop(0)
             if hub.url in seen:
                 continue
             seen.add(hub.url)
-            kids = hubs.expand(http, hub, relevant=True)
+            subs: list = []
+            kids = hubs.expand(http, hub, relevant=True, subhubs=subs if level == 0 else None, matcher=matcher)
             if kids:
                 ctx.log(f"Übersichtsseite „{hub.title[:60]}“: {len(kids)} Artikel-Links")
+                before = ctx.new_articles
                 ingest(kids, ctx, allow_llm, http=http, fetch_details=True, max_age_days=max_age_days,
                        progress=progress, _depth=1)
+                if hubs.record_yield(hub.url, [k.url for k in kids], ctx.new_articles - before):
+                    ctx.log("  → wird künftig bei jedem Abruf direkt gescannt (Folgeseiten im Historie-Abruf)")
+            queue += [(sub, level + 1) for sub in subs]
     finally:
         if own:
             http.close()
@@ -434,6 +444,18 @@ def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool, source_ids: li
     return items
 
 
+def _watched_hub_items(source_ids: list[int] | None = None) -> list[Item]:
+    """Beobachtete Übersichtsseiten der aktiven Quellen als Abruf-Einträge (werden im Ingest aufgelöst)."""
+    from .textutil import domain_matches
+    srcs = [s for s in all_sources(enabled_only=True) if source_ids is None or s["id"] in source_ids]
+    out = []
+    for row in hubs.watched():
+        src = next((s for s in srcs if domain_matches(row["url"], s["domain"])), None)
+        if src and hubs.due(row["url"]):
+            out.append(hubs.item_for(row, src))
+    return out
+
+
 def run_scan(kind: str, source_ids: list[int] | None = None) -> int | None:
     """kind: initial | regulär | manuell | nachholen. Gibt die Run-ID zurück (None, wenn bereits ein Scan läuft).
     nachholen = wie initial, aber nur für source_ids (neue bzw. geänderte Quellen nach einem Update)."""
@@ -448,6 +470,7 @@ def run_scan(kind: str, source_ids: list[int] | None = None) -> int | None:
     try:
         initial = kind in ("initial", "nachholen")
         items = _collect_current(http, ctx, initial, source_ids)
+        items += _watched_hub_items(source_ids)
         STATUS["scan"]["phase"] = f"Prüfung von {len(items)} Meldungen"
         ingest(items, ctx, allow_llm=True, http=http, fetch_details=False,
                max_age_days=None if initial else int(config.get("regular_lookback_days")), progress=STATUS["scan"])
@@ -700,6 +723,16 @@ def _run_task(http: fetcher.Http, task, src) -> tuple[list[Item], list[tuple]]:
             with db.tx() as conn:
                 refine.refine_existing_wayback(conn, feed, task["source_id"])
         return [], subs
+    if method == "hub_page":         # Folgeseite einer beobachteten Übersicht: Artikel-Links und nächste Seite
+        resp = http.get(task["target"])
+        hub = hubs.item_for(task["target"], src, parent_hub=task["target"])
+        kids = hubs.children(hub, resp.text, str(resp.url), relevant=True)
+        subs = []
+        nxt = hubs.next_page(resp.text, str(resp.url))
+        if kids and nxt and nxt != task["target"] and task["depth"] + 1 < int(config.get("hub_max_pages")):
+            today = datetime.now(timezone.utc).date()
+            subs.append(("hub_page", nxt, today, today, 1, task["depth"] + 1))
+        return kids, subs
     if method == "wayback_feed":
         url = task["target"]
         ts = url.split("/web/")[1].split("id_/")[0]
@@ -832,6 +865,8 @@ def upgrade_on_start(changes: dict | None = None) -> list[str]:
     Gibt die durchgeführten Schritte zurück (auch als Lauf „aktualisierung“ protokolliert)."""
     changes = changes or {}
     notes: list[str] = []
+    if hubs.seed():
+        notes.append("Bekannte Übersichtsseiten werden beobachtet (siehe Admin → Quellen → Übersichtsseiten).")
     has_data = bool(db.query_one("SELECT 1 FROM articles LIMIT 1"))
     ids = list(changes.get("added", [])) + list(changes.get("updated", []))
     if ids and config.state_get("initial_done"):

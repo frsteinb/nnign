@@ -203,6 +203,11 @@ MIGRATIONS = [
     ("articles", "title_orig", "TEXT NOT NULL DEFAULT ''"),
     ("articles", "summary_orig", "TEXT NOT NULL DEFAULT ''"),
     ("articles", "translated_by", "TEXT NOT NULL DEFAULT ''"),
+    ("hub_pages", "watch", "INTEGER NOT NULL DEFAULT 0"),      # 0 erkannt | 1 automatisch beobachtet | 2 von Hand | -1 aus
+    ("hub_pages", "relevant", "INTEGER NOT NULL DEFAULT 0"),   # relevante Artikel beim letzten Laden
+    ("hub_pages", "new_last", "INTEGER NOT NULL DEFAULT 0"),   # davon neu gespeichert
+    ("hub_pages", "parent", "TEXT NOT NULL DEFAULT ''"),       # gefunden auf dieser Übersichtsseite
+    ("hub_pages", "watched_at", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

@@ -84,3 +84,64 @@ def test_stored_hub_articles_are_cleaned_up(env):
     assert db.query_one("SELECT relevant FROM articles WHERE title='VW - News und Hintergründe'")["relevant"] == 0
     maintenance.work()
     assert db.query_one("SELECT 1 FROM articles WHERE via='übersicht' AND relevant=1")
+
+
+def test_productive_hub_is_watched_scanned_directly_and_paged(env):
+    from app import db, fetcher, hubs, pipeline
+    _world(env)
+    day = (NOW - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    art = lambda desc: (lambda p: (f'<html><head><meta property="og:type" content="article"><meta property="og:description" '
+                                   f'content="{desc}"><meta property="article:published_time" content="{day}"></head></html>'
+                                   .encode(), "text/html"))
+    sub = """<html><body><main><a href="/porsche/prognose.html">Porsche senkt die Prognose für das laufende Geschäftsjahr</a>
+      </main></body></html>"""
+    env.routes["/thema/porsche/"] = lambda p: (sub.encode(), "text/html")
+    env.routes["/porsche/prognose.html"] = art("Der Sportwagenbauer erwartet weniger Umsatz.")
+    page1 = env.routes["/hub/vw.html"](None)[0].decode().replace("</main>", '<a rel="next" href="/hub/vw.html?page=2">Weiter</a></main>')
+    page2 = """<html><body><main><a href="/nds/alt.html">Volkswagen eröffnet neues Batteriewerk in Salzgitter</a></main></body></html>"""
+    env.routes["/hub/vw.html"] = lambda p: ((page2 if "page=2" in (p or "") else page1).encode(), "text/html")
+    env.routes["/nds/alt.html"] = art("Die Zellfertigung beginnt.")
+    pipeline.run_scan("initial")
+    h = db.query_one("SELECT * FROM hub_pages WHERE url LIKE '%/hub/vw.html'")
+    assert h["watch"] == 1 and h["relevant"] >= 2                        # ergiebig -> beobachtet
+    titles = {r["title"] for r in db.query("SELECT title FROM articles WHERE relevant=1")}
+    assert "Porsche senkt die Prognose für das laufende Geschäftsjahr" in titles   # Unter-Übersicht aufgelöst
+    # künftig direkt gescannt, auch wenn kein Feed sie mehr liefert
+    env.routes["/feeds/ndr.rss"] = lambda p: (rss([]), "application/rss+xml")
+    with db.tx() as conn:
+        conn.execute("UPDATE hub_pages SET last_fetch='2000-01-01T00:00:00+00:00' WHERE watch>0")
+    n = len(env.hits)
+    pipeline.run_scan("manuell")
+    assert any("/hub/vw.html" in x for x in env.hits[n:])
+    # Folgeseiten im Historie-Abruf
+    with db.tx() as conn:
+        conn.execute("UPDATE backfill_tasks SET status='ok' WHERE method!='hub_page'")
+    http = fetcher.Http()
+    for _ in range(3):
+        pipeline.backfill_batch(http)
+    pages = db.query("SELECT target, status, depth FROM backfill_tasks WHERE method='hub_page' ORDER BY depth")
+    assert [p["depth"] for p in pages][:2] == [0, 1] and "page=2" in pages[1]["target"]
+    assert "Volkswagen eröffnet neues Batteriewerk in Salzgitter" in {
+        r["title"] for r in db.query("SELECT title FROM articles WHERE relevant=1")}
+    assert hubs.next_page('<a href="/x/seite-3">3</a><a href="/x/seite-2">2</a>', "https://a.de/x/") == "https://a.de/x/seite-2"
+
+
+def test_admin_adds_hub_by_hand(env):
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from app import db, hubs, main
+    _world(env)
+    os.environ["ADMIN_PASSWORD"] = "geheim123"
+    with TestClient(main.app) as c:
+        c.post("/login", data={"password": "geheim123"}, headers={"origin": "http://testserver"})
+        fetch = {"origin": "http://testserver", "x-requested-with": "fetch"}
+        d = c.post("/admin/hubs/watch", data={"url": "https://unbekannt.example/vw/", "watch": "2"}, headers=fetch).json()
+        assert "keine Quelle" in d["msg"]
+        d = c.post("/admin/hubs/watch", data={"url": f"{env.base}/hub/vw.html", "watch": "2"}, headers=fetch).json()
+        assert "beobachtet" in d["msg"]
+        assert db.query_one("SELECT watch FROM hub_pages WHERE url=?", (f"{env.base}/hub/vw.html",))["watch"] == 2
+        assert "Übersichtsseiten" in c.get("/admin").text
+        c.post("/admin/hubs/watch", data={"url": f"{env.base}/hub/vw.html", "watch": "-1"}, headers=fetch)
+        assert [r["url"] for r in hubs.watched()] == hubs.SEED_HUBS     # nur noch die vorgegebene Seite

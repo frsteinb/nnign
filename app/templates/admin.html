@@ -186,6 +186,29 @@
       </td></tr>
     {% endfor %}</tbody>
   </table></div>
+  <h3 class="subhead" id="uebersichtsseiten">Übersichtsseiten</h3>
+  <p class="muted small">Themen- und Übersichtsseiten (z. B. „VW – News und Hintergründe“) sind keine Artikel; nnign lädt
+    ihre Artikel-Links einzeln. Liefert eine Seite mindestens {{ hub_watch_min }} relevante Artikel, wird sie
+    <strong>beobachtet</strong>: bei jedem Abruf direkt gescannt, verlinkte Unter-Übersichten mit Konzernbezug werden mit
+    aufgelöst, und ältere Seiten („Seite 2“ …) laufen in den Historie-Abruf.</p>
+  {% if hub_rows %}<div class="scroll"><table class="list hubs">
+    <thead><tr><th>Übersichtsseite</th><th>Zustand</th><th>Artikel-Links</th><th>relevant</th><th>Folgeseiten</th><th>Zuletzt</th><th></th></tr></thead>
+    <tbody>{% for h in hub_rows %}
+      <tr class="{{ 'muted' if h.watch < 0 }}">
+        <td class="wrap"><a href="{{ h.url }}" rel="noopener" target="_blank">{{ h.title or h.url }}</a><br><span class="muted small">{{ h.url }}</span></td>
+        <td class="small"><span class="state {{ 'ok' if h.watch > 0 else ('inactive' if h.watch < 0 else 'queued') }}">{{ hub_labels[h.watch] }}</span></td>
+        <td class="small">{{ h.links }}</td><td class="small">{{ h.relevant }}{% if h.new_last %} ({{ h.new_last }} neu){% endif %}</td>
+        <td class="small">{{ h.pages_done or 0 }}{% if h.pages_open %} · {{ h.pages_open }} offen{% endif %}</td>
+        <td class="small">{{ h.last_fetch|dt if h.last_fetch else '–' }}</td>
+        <td><form method="post" action="/admin/hubs/watch"><input type="hidden" name="url" value="{{ h.url }}">
+          <input type="hidden" name="watch" value="{{ -1 if h.watch > 0 else 2 }}">
+          <button class="small-btn {{ 'secondary' if h.watch > 0 }}">{{ 'Nicht mehr beobachten' if h.watch > 0 else 'Beobachten' }}</button></form></td>
+      </tr>{% endfor %}</tbody>
+  </table></div>{% else %}<p class="muted small">Noch keine Übersichtsseiten erkannt.</p>{% endif %}
+  <form method="post" action="/admin/hubs/watch" class="inline-add">
+    <input type="url" name="url" required placeholder="https://www.beispiel.de/wirtschaft/volkswagen/" aria-label="Adresse der Übersichtsseite">
+    <input type="hidden" name="watch" value="2"><button>Übersichtsseite beobachten</button>
+  </form>
   <details class="source"><summary><strong>+ Neue Quelle</strong></summary>
     <p class="muted small">Archiv-Vorlage: Platzhalter {YYYY} {MM} {DD} {M} {D} {WW}. Link-Muster: regulärer Ausdruck, dem Artikel-Adressen auf Archivseiten entsprechen müssen.</p>
     {% with s=None, action='/admin/sources' %}{% include "source_form.html" %}{% endwith %}

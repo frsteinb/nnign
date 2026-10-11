@@ -390,3 +390,7 @@ hr.divider { border: 0; border-top: 2px solid var(--line, #d0d7de); margin: 22px
 .chart a.bar { outline: none; }
 .chart .col.kfocus .hit { fill: var(--ink); opacity: .12; }
 .chart a.bar:focus-visible .hit { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 3 2; }
+
+/* Übersichtsseiten im Admin */
+.inline-add { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 18px; }
+.inline-add input[type=url] { flex: 1 1 320px; }

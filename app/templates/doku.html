@@ -66,6 +66,12 @@ sind keine Meldungen. nnign erkennt sie an Titel, Adresse und Seitenaufbau, spei
 (höchstens alle 12 Stunden), entnimmt dem Hauptinhalt die Links auf die eigentlichen Artikel und verarbeitet diese
 einzeln mit Teaser und Datum der Artikelseite. Artikel ohne erkennbares Datum werden nicht übernommen; Artikel einer
 VW-Übersicht gelten als konzernrelevant, auch wenn ihr Titel den Konzern nicht nennt.</p>
+<p>Liefert eine Übersichtsseite mindestens zwei relevante Artikel, wird sie <strong>beobachtet</strong>: nnign lädt sie
+künftig bei jedem regulären Abruf direkt – auch wenn Feed oder Suche sie nicht mehr liefern –, löst darauf verlinkte
+Unter-Übersichten mit Konzernbezug mit auf (z. B. eine Porsche-Themenseite auf der VW-Seite) und legt ihre älteren
+Seiten („Weiter“, „Seite 2“ …) als Aufgaben in den Historie-Abruf, bis zu {{ cfg('hub_max_pages') }} Seiten. Unter
+Admin → Quellen → Übersichtsseiten lassen sich Seiten von Hand hinzufügen (z. B.
+https://www.braunschweiger-zeitung.de/wirtschaft/volkswagen/, ist bereits vorgegeben) oder abschalten.</p>
 <p>Zwischen zwei Anfragen an denselben Server liegen mindestens {{ cfg('host_delay_seconds') }} s (Internet Archive
 {{ cfg('wayback_delay_seconds') }} s). Bei Ratelimits (HTTP 429/503) wird einmal gewartet und wiederholt.</p>
 <table>
