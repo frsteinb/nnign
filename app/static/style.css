@@ -382,3 +382,6 @@ rect.cov.growing { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 1
 .filters.loading input[type=search] { background-image: linear-gradient(90deg, transparent, rgba(0,0,0,.06), transparent);
   background-size: 200% 100%; animation: nnign-load 1s linear infinite; }
 @keyframes nnign-load { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Übersicht: Gesamtbestand oben, Trennlinie, darunter Filter und gefilterte Sicht */
+hr.divider { border: 0; border-top: 2px solid var(--line, #d0d7de); margin: 22px 0 16px; scroll-margin-top: 12px; }

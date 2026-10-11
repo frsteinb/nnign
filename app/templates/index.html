@@ -1,18 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-{% set st = status %}
-{% set sx = stats %}
-{% if is_admin(request) %}{% if msg and not select %}<div class="flash">{{ msg }}</div>{% endif %}{% include "_suggestions.html" %}{% endif %}
-<section class="activity" id="activity" aria-live="polite" data-topics="{{ status.topics }}">
-{% include "_activity.html" %}
-</section>
-
-<section class="card statbox" aria-label="Statistik zum Datenbestand">
+{% macro statbox(sx, filtered) %}
+<section class="card statbox{{ ' filtered' if filtered }}" aria-label="Statistik zum {{ 'gefilterten ' if filtered }}Datenbestand">
   <div class="card-head">
-    <h2>Datenbestand{% if sx.filtered %} <span class="muted small">(aktuelle Auswahl)</span>{% endif %}</h2>
-    <div class="statusline muted small" id="statusline" {{ 'hidden' if activity }}>
-      Letzter Scan {{ st.last_scan_at|dt if st.last_scan_at else '–' }} · nächster {{ st.next_scan_at|dt }}
-    </div>
+    <h2>{% if filtered %}Gefilterter Datenbestand{% else %}Datenbestand gesamt{% endif %}</h2>
+    {% if not filtered %}<div class="statusline muted small" id="statusline" {{ 'hidden' if activity }}>
+      Letzter Scan {{ status.last_scan_at|dt if status.last_scan_at else '–' }} · nächster {{ status.next_scan_at|dt }}
+    </div>{% endif %}
   </div>
   <div class="kpis">
     <div><span class="num">{{ sx.topics }}</span><span class="lbl">Themen</span></div>
@@ -29,9 +23,9 @@
     {% if sx.neg %}<span class="seg neg" style="flex: {{ sx.neg }}" title="{{ sx.neg }} negativ"></span>{% endif %}
   </div>
   <div class="share-legend small">
-    <a href="{{ qs(sentiment='positiv') }}"><span class="dot pos"></span>{{ sx.pos_pct }} % positiv ({{ sx.pos }})</a>
-    <a href="{{ qs(sentiment='neutral') }}"><span class="dot neu"></span>{{ sx.neu_pct }} % neutral ({{ sx.neu }})</a>
-    <a href="{{ qs(sentiment='negativ') }}"><span class="dot neg"></span>{{ sx.neg_pct }} % negativ ({{ sx.neg }})</a>
+    <a href="{{ qs(sentiment='positiv') }}#gefiltert"><span class="dot pos"></span>{{ sx.pos_pct }} % positiv ({{ sx.pos }})</a>
+    <a href="{{ qs(sentiment='neutral') }}#gefiltert"><span class="dot neu"></span>{{ sx.neu_pct }} % neutral ({{ sx.neu }})</a>
+    <a href="{{ qs(sentiment='negativ') }}#gefiltert"><span class="dot neg"></span>{{ sx.neg_pct }} % negativ ({{ sx.neg }})</a>
   </div>
   <div class="facts-inline small muted">
     <span>Top-Medien: {% for m in sx.top_media %}{{ m.name }} {{ m.c }}{{ ', ' if not loop.last }}{% endfor %}</span>
@@ -41,12 +35,13 @@
   </div>
   {% endif %}
 </section>
-
-<section class="card">
+{% endmacro %}
+{% macro chartbox(timeline, max_v, year, overall) %}
+<section class="card chartbox">
   <div class="card-head">
-    <h2>{% if args.year %}Themen {{ args.year }} nach Monat{% else %}Entwicklung seit {{ timeline[0].key if timeline else '' }}{% endif %}</h2>
+    <h2>{% if year %}Entwicklung {{ year }} nach Monat{% if not overall %} gemäß Filter{% endif %}{% else %}Entwicklung seit {{ timeline[0].key if timeline else '' }}{% if not overall %} gemäß Filter{% endif %}{% endif %}</h2>
     <div class="legend"><span><span class="dot pos"></span>positiv (oben)</span><span><span class="dot neu"></span>neutral (Mitte)</span><span><span class="dot neg"></span>negativ (unten)</span>
-      {% if args.year %}<a href="{{ qs(year='') }}">alle Jahre</a>{% endif %}</div>
+      {% if year %}<a href="{{ qs(year='') }}#gefiltert">alle Jahre</a>{% endif %}</div>
   </div>
   {% set n = timeline|length %}
   {% set w = 760 %}{% set h = 220 %}{% set mid = 110 %}{% set pad = 28 %}
@@ -54,7 +49,7 @@
   {% set bw = [[step - 2, 2]|max, 44]|min %}{% set off = (step - 2 - bw) / 2 %}
   <div class="chart-wrap">
   {% set covmap = {} %}{% for c in coverage %}{% set _ = covmap.update({c.year|string: c}) %}{% endfor %}
-  <svg class="chart" viewBox="0 0 {{ w }} {{ h + (28 if not args.year else 18) }}" role="img" aria-label="Positive, neutrale und negative Themen je Zeitraum">
+  <svg class="chart" viewBox="0 0 {{ w }} {{ h + (28 if not year else 18) }}" role="img" aria-label="Positive, neutrale und negative Themen je Zeitraum">
     <line class="axis" x1="{{ pad }}" x2="{{ w }}" y1="{{ mid }}" y2="{{ mid }}"/>
     <text class="tick" x="{{ pad - 4 }}" y="14" text-anchor="end">{{ '%g'|format(max_v) }}</text>
     <text class="tick" x="{{ pad - 4 }}" y="{{ mid + 4 }}" text-anchor="end">0</text>
@@ -63,24 +58,24 @@
       {% set x = pad + loop.index0 * step + 1 + off %}
       {% set scale = (mid - 10) / max_v %}
       {% set hz = p.neu * scale %}{% set hp = p.pos * scale %}{% set hn = p.neg * scale %}
-      {% set label = p.key[5:] if args.year else p.key %}
-      <a href="{{ qs(year=p.key[:4]) if not args.year else qs(date_from=p.key ~ '-01', date_to=p.key ~ '-31', year=args.year) }}">
-      {% set cv = covmap.get(p.key[:4]) %}
-      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ{% if cv and not args.year %} · Datenlage {{ cv.level }}{{ ' – wird noch ergänzt' if cv.growing }}{% endif %}">
+      {% set label = p.key[5:] if year else p.key %}
+      <a href="{{ qs(year=p.key[:4]) if not year else qs(date_from=p.key ~ '-01', date_to=p.key ~ '-31', year=year) }}#gefiltert">
+      {% set cv = covmap.get(p.key[:4]) if overall else none %}
+      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ{% if cv and not year %} · Datenlage {{ cv.level }}{{ ' – wird noch ergänzt' if cv.growing }}{% endif %}">
         <rect class="hit" x="{{ x - 1 - off }}" y="0" width="{{ step }}" height="{{ h }}"/>
         {% if p.neu %}<rect class="neu" x="{{ x }}" y="{{ mid - hz/2 }}" width="{{ bw }}" height="{{ [hz, 1]|max }}"/>{% endif %}
         {% if p.pos %}<rect class="pos" x="{{ x }}" y="{{ mid - hz/2 - 1 - hp }}" width="{{ bw }}" height="{{ hp }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
         {% if p.neg %}<rect class="neg" x="{{ x }}" y="{{ mid + hz/2 + 1 }}" width="{{ bw }}" height="{{ hn }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
       </g></a>
-      {% if cv and not args.year %}<rect class="cov {{ cv.level }}{{ ' growing' if cv.growing }}" x="{{ x }}" y="{{ h + 19 }}" width="{{ bw }}" height="5" rx="1"><title>{{ p.key }}: Datenlage {{ cv.level }} ({{ cv.articles }} Meldungen){{ ' – Historie wird noch ergänzt' if cv.growing }}</title></rect>{% endif %}
-      {% if args.year or loop.index0 % ((n // 13) + 1) == 0 or loop.last %}
+      {% if cv and not year %}<rect class="cov {{ cv.level }}{{ ' growing' if cv.growing }}" x="{{ x }}" y="{{ h + 19 }}" width="{{ bw }}" height="5" rx="1"><title>{{ p.key }}: Datenlage {{ cv.level }} ({{ cv.articles }} Meldungen){{ ' – Historie wird noch ergänzt' if cv.growing }}</title></rect>{% endif %}
+      {% if year or loop.index0 % ((n // 13) + 1) == 0 or loop.last %}
       <text class="tick" x="{{ x + bw/2 }}" y="{{ h + 14 }}" text-anchor="middle">{{ label }}</text>
       {% endif %}
     {% endfor %}
   </svg>
   <div class="tooltip" hidden></div>
   </div>
-  {% if coverage and not args.year %}
+  {% if overall and coverage and not year %}
   {% set thin = coverage|selectattr('level', 'equalto', 'dünn')|map(attribute='year')|list %}
   {% set growing = coverage|selectattr('growing')|list %}
   <p class="covnote small"><span class="covkey"><span class="cov gut"></span>gut <span class="cov mittel"></span>mittel <span class="cov dünn"></span>dünn erfasst</span>
@@ -94,6 +89,17 @@
     </tbody></table>
   </details>
 </section>
+{% endmacro %}
+{% set st = status %}
+{% set sx = stats %}
+{% if is_admin(request) %}{% if msg and not select %}<div class="flash">{{ msg }}</div>{% endif %}{% include "_suggestions.html" %}{% endif %}
+{{ statbox(stats_all, false) }}
+{{ chartbox(timeline_all, max_all, '', true) }}
+<section class="activity" id="activity" aria-live="polite" data-topics="{{ status.topics }}">
+{% include "_activity.html" %}
+</section>
+
+<hr class="divider" id="gefiltert">
 
 <form class="filters" id="filters" method="get" action="/">
   <input type="search" name="q" value="{{ args.q }}" placeholder="Suche in Themen …" aria-label="Suche">
@@ -125,6 +131,11 @@
   <noscript><button type="submit">Filtern</button></noscript>
   <a class="muted" href="/">zurücksetzen</a>
 </form>
+
+{% if filtered %}
+{{ statbox(stats, true) }}
+{{ chartbox(timeline, max_v, args.year, false) }}
+{% endif %}
 
 <p class="muted">{{ total }} Themen{% if args.year %} im Jahr {{ args.year }}{% endif %} ·
   <a href="/export.csv?{{ request.query_params }}">als CSV</a> ·
@@ -169,8 +180,8 @@
   var listIo = null, mergeBound = false;
   function initList() {
     if (listIo) { listIo.disconnect(); listIo = null; }
-    var wrap = document.querySelector('.chart-wrap');
-    if (wrap) {
+    document.querySelectorAll('.chart-wrap:not([data-init])').forEach(function (wrap) {
+      wrap.setAttribute('data-init', '1');
       var tip = wrap.querySelector('.tooltip');
       wrap.querySelectorAll('.col').forEach(function (g) {
         g.addEventListener('mousemove', function (e) {
@@ -183,7 +194,7 @@
         });
         g.addEventListener('mouseleave', function () { tip.hidden = true; });
       });
-    }
+    });
 
     // Auswahlmodus: Themen zum Zusammenführen ankreuzen
     var mf = document.getElementById('mergeform');
@@ -261,22 +272,16 @@
       return form.getAttribute('action') + (s ? '?' + s : '');
     };
     var swap = function (doc) {
-      var cur = form.parentNode, fresh = doc.querySelector('main');
-      if (!fresh) return false;
-      Array.prototype.slice.call(cur.children).forEach(function (el) {
-        if (el !== form && el.id !== 'activity') cur.removeChild(el);
-      });
-      var before = true;
-      Array.prototype.slice.call(fresh.children).forEach(function (el) {
-        if (el.id === 'filters') { before = false; return; }
-        if (el.id === 'activity') return;
-        var n = document.importNode(el, true);
-        if (before) cur.insertBefore(n, form); else cur.appendChild(n);
-      });
-      // versteckte Felder (Jahr, Auswahlmodus) angleichen
+      // Gesamtbestand oben bleibt stehen; ausgetauscht wird alles nach dem Filterformular
       var nf = doc.getElementById('filters');
+      if (!nf) return false;
+      while (form.nextSibling) form.parentNode.removeChild(form.nextSibling);
+      var tail = [];
+      for (var el = nf.nextSibling; el; el = el.nextSibling) tail.push(el);
+      tail.forEach(function (el) { form.parentNode.appendChild(document.importNode(el, true)); });
+      // versteckte Felder (Jahr, Auswahlmodus) angleichen
       form.querySelectorAll('input[type=hidden]').forEach(function (el) { el.remove(); });
-      if (nf) nf.querySelectorAll('input[type=hidden]').forEach(function (el) {
+      nf.querySelectorAll('input[type=hidden]').forEach(function (el) {
         form.insertBefore(document.importNode(el, true), form.querySelector('select[name=order]'));
       });
       return true;

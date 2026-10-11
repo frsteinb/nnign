@@ -28,7 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.14.1"
+VERSION = "1.15.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -452,9 +452,13 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
     total, rows = list_topics(args, page, size, order)
     items = [{"t": t, "sources": topic_sources(t["id"])} for t in rows]
     acts = activity()
+    filtered = any(args.values())
     tl = timeline(args)
-    # Skala für das gestapelte Diagramm: neutral liegt mittig auf der Nulllinie
-    max_v = max([max(x["pos"] + x["neu"] / 2, x["neg"] + x["neu"] / 2) for x in tl] + [1])
+    tl_all = timeline({k: "" for k in args}) if filtered else tl
+
+    def scale(t):   # Skala für das gestapelte Diagramm: neutral liegt mittig auf der Nulllinie
+        return max([max(x["pos"] + x["neu"] / 2, x["neg"] + x["neu"] / 2) for x in t] + [1])
+    max_v = scale(tl)
     domains = db.query("SELECT source_domain d, MIN(source_name) n, COUNT(*) c FROM articles "
                        "WHERE relevant=1 GROUP BY source_domain ORDER BY n")
     base_q = {k: v for k, v in args.items() if v}
@@ -469,6 +473,8 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
         "activity": acts, "more_url": "/fragment/topics?" + urlencode({**base_q, "order": order, "page": page + 1})
         if page * size < total else "",
         "stats": stats(args), "period_since": pipeline.period()[0].isoformat(),
+        "filtered": filtered, "timeline_all": tl_all, "max_all": scale(tl_all),
+        "stats_all": stats({k: "" for k in args}) if filtered else stats(args),
         "qs": lambda **kw: "?" + urlencode({**base_q, "order": order, **kw}),
     })
 
