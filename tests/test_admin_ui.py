@@ -160,6 +160,7 @@ def test_backends_section(env):
     c = _admin()
     try:
         t = c.get("/fragment/admin-status").text
-        assert "Abrufwege und Dienste" in t and "Internet Archive (Wayback)" in t and "Zero-Shot-Modell" in t
+        assert "Abrufwege und Dienste" in t and "Internet Archive (Wayback)" in t and "Hugging Face" in t
+        assert "Zweck: Bewertung per Entscheidungsmodell" in t
     finally:
         c.__exit__(None, None, None)

@@ -995,6 +995,11 @@ def _later(a: str | None, b: str | None) -> str | None:
     return max((x for x in (a, b) if x), default=None)
 
 
+PROVIDER_NAMES = {"anthropic": "Anthropic Claude", "openai": "OpenAI", "azure": "Azure OpenAI", "gemini": "Google Gemini",
+                  "mistral": "Mistral", "groq": "Groq", "openrouter": "OpenRouter", "ollama": "Ollama",
+                  "openai_compatible": "OpenAI-kompatibler Server"}
+
+
 def backends() -> list[dict]:
     """Abrufwege (Web, Suche, Wayback) und KI-/Übersetzungsdienste mit Zustand, letztem Zugriff und Zahlen."""
     from . import fetcher
@@ -1044,12 +1049,17 @@ def backends() -> list[dict]:
         add("Abrufwege für Meldungen", "be-" + key, name, state, _ago(last), numbers, details)
 
     # ------------------------------------------------ KI-Anbieter (Haupt- und Ausweich-Anbieter)
+    def lead(purpose: str, model: str = "") -> str:      # Zweck und Modell vorn in den Details
+        return f"Zweck: {purpose}" + (f" · Modell: {model}" if model else "") + " · "
+
     for slot in llm.slots():
         with llm.using(slot):
             prov, mdl, miss = llm.provider_name(), llm.model(), llm.missing()
         until, reason = llm.pause_info(slot)
         r = llm.last_result(slot) or {}
-        name = f"KI: {llm.slot_label(slot)}" + (f" ({prov} · {mdl})" if prov else "")
+        name = PROVIDER_NAMES.get(prov, prov or "–")
+        purpose = ("Haupt-Anbieter für Analyse, Bewertung und Übersetzung" if slot == "primary" else
+                   f"{llm.slot_label(slot)} – springt ein, wenn die vorherigen pausieren")
         numbers = f"heute {llm.calls_today()} Aufrufe insgesamt" if slot == "primary" else "–"
         if miss:
             state, details = ("inactive" if miss == "deaktiviert" else "setup"), miss
@@ -1059,10 +1069,10 @@ def backends() -> list[dict]:
         elif r.get("kind") in ("auth", "error", "offline", "bad_answer"):
             state, details = "problem", llm.describe_result(r)
         elif not r:
-            state, details = "queued", "noch nicht benutzt" + ("" if slot == "primary" else
-                                                              " – springt ein, wenn die vorherigen pausieren")
+            state, details = "queued", "noch nicht benutzt"
         else:
             state, details = "ok", "letzte Antwort: " + llm.describe_result(r)
+        details = lead(purpose, mdl if prov else "") + details
         add("KI-Dienste", "be-llm-" + slot, name, state, _ago(r.get("at")), numbers, details,
             [("Testen", "/admin/llm-test", "secondary")] if slot == "primary" and not miss else [])
 
@@ -1076,7 +1086,9 @@ def backends() -> list[dict]:
         state, details = "problem", classify._zs_pause["error"]
     else:
         state, details = "ok", classify.zs_status()
-    add("KI-Dienste", "be-zeroshot", f"Zero-Shot-Modell ({config.get('zeroshot_model')})", state,
+    details = lead("Bewertung per Entscheidungsmodell (Zero-Shot), z. B. solange die KI pausiert",
+                   config.get("zeroshot_model")) + details
+    add("KI-Dienste", "be-zeroshot", "Hugging Face", state,
         _ago(config.state_get("zs_last")),
         f"heute {classify._zs_calls_today()} von {int(config.get('zeroshot_max_calls_per_day'))} Aufrufen", details,
         [("Testen", "/admin/zeroshot-test", "secondary")] if classify.zs_configured() else [])
@@ -1094,6 +1106,8 @@ def backends() -> list[dict]:
         state, details = "problem", translate.last_problem.recent(1)
     else:
         state, details = "ok", f"genutzt: {translate.NAMES[prov]}" + (f" (unter {lt})" if prov == "libretranslate" else "")
-    add("KI-Dienste", "be-translate", "Übersetzer", state, _ago(config.state_get("translate_last")),
+    details = lead("fremdsprachige Meldungen ins Deutsche übersetzen") + details
+    add("KI-Dienste", "be-translate", translate.NAMES.get(prov) if prov and prov != "llm" else
+        ("KI-Übersetzung" if prov == "llm" else "Übersetzer"), state, _ago(config.state_get("translate_last")),
         f"verfügbar: {avail or 'keiner'}", details, [("Testen", "/admin/translate-test", "secondary")] if prov else [])
     return out
