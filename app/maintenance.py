@@ -814,6 +814,10 @@ def jobs() -> list[dict]:
         state, details = "problem", llm.last_problem.recent(1)
     else:
         state, details = "ok", llm.describe().replace("aktiv: ", "")
+    for slot, label in (("primary", ""), ("fallback", "Ausweich-Anbieter: ")):
+        r = llm.last_result(slot)
+        if r and r.get("kind") != "ok" and (slot == "primary" or llm.fallback_configured()):
+            details += f" · {label}letzte Antwort: {llm.describe_result(r)}"
     add("Bewertung", "llm", "KI (Sprachmodell) für neue Meldungen", state, _ago(config.state_get("llm_last_ok")), nums,
         details, [("Verbindung testen", "/admin/llm-test", ""), ("Verfügbare Modelle", "/admin/llm-models", "secondary")])
 

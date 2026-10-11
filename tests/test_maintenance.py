@@ -257,3 +257,39 @@ def test_zeroshot_covers_while_llm_paused(env):
     llm.pause(600, "Rate-Limit des Anbieters")
     assert maintenance.zeroshot_active() and maintenance.zeroshot_batch() >= 1
     config.set("sentiment_engine", "auto")
+
+
+def test_gemini_daily_quota_is_remembered_and_shown(env):
+    from app import llm, maintenance
+    body = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                      "message": "Quota exceeded for metric: generate_content_free_tier_requests, limit: 250, "
+                                 "quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                      "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "34s"}]}}
+    _openai_mock(env, lambda b: (429, body))
+    from app import config
+    config.set("llm_provider", "gemini")
+    t = llm.test_connection()
+    assert "Fehlgeschlagen" in t or "pausiert" in t
+    r = llm.last_result()
+    assert r["kind"] == "limit" and r["http"] == 429 and "RESOURCE_EXHAUSTED" in r["detail"]
+    until, reason = llm.pause_info("primary")
+    assert reason == "Tageskontingent des Anbieters erschöpft" and until - time.time() > 3600   # bis zum Tageswechsel
+    t2 = llm.test_connection()
+    assert "pausiert bis" in t2 and "Tageskontingent" in t2 and "Quota exceeded" in t2
+    row = next(j for j in maintenance.jobs() if j["key"] == "llm")
+    assert row["state"] == "limit" and "letzte Antwort: Limit erreicht (HTTP 429)" in row["details"]
+
+
+def test_minute_limit_uses_retry_delay_and_empty_answer_is_explained(env):
+    from app import llm
+    _openai_mock(env, lambda b: (429, {"error": {"status": "RESOURCE_EXHAUSTED", "message": "per minute",
+                                                 "details": [{"retryDelay": "34s"}]}}))
+    llm.test_connection()
+    until, _ = llm.pause_info("primary")
+    assert 25 < until - time.time() <= 34
+    llm._pause.update(until=0.0, fails=0)
+    from app import config
+    config.state_set("llm_pause", None)
+    _openai_mock(env, lambda b: (200, {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}))
+    t = llm.test_connection()
+    assert "leere Antwort" in t and "Antwortlimit" in t

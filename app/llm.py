@@ -267,17 +267,99 @@ def pause(seconds: float, reason: str) -> None:
     log.warning("KI (%s) pausiert für %d s: %s", provider_name(), seconds, reason)
 
 
-def _limit_hit(retry_after: str | None = None, reason: str = "Rate-Limit des Anbieters") -> None:
+KINDS = {"ok": "Antwort erhalten", "limit": "Limit erreicht", "auth": "Zugriff verweigert",
+         "error": "Fehler beim Anbieter", "offline": "nicht erreichbar", "bad_answer": "Antwort unbrauchbar",
+         "refused": "Analyse abgelehnt/gefiltert"}
+
+
+def _record(kind: str, detail: str = "", http: int | None = None) -> None:
+    """Letzte Antwort des aktuellen Anbieters merken (bleibt über Neustarts erhalten, für Test und Status)."""
+    from . import db
+    key = "llm_last_result" if current_slot() == "primary" else "llm_last_result_fallback"
+    if kind == "ok":
+        prev = config.state_get(key) or {}
+        if prev.get("kind") == "ok" and time.time() - prev.get("ts", 0) < 60:
+            return                               # erfolgreiche Antworten nicht bei jedem Aufruf speichern
+    config.state_set(key, {"kind": kind, "detail": (detail or "")[:400], "http": http, "at": db.utcnow(),
+                           "ts": time.time(), "provider": provider_name(), "model": model()})
+
+
+def last_result(slot: str = "primary") -> dict | None:
+    return config.state_get("llm_last_result" if slot == "primary" else "llm_last_result_fallback")
+
+
+def describe_result(r: dict | None) -> str:
+    """„Limit erreicht (HTTP 429): Quota exceeded … · 14:02 Uhr“"""
+    if not r:
+        return ""
+    when = ""
+    try:
+        when = _local(datetime.fromisoformat(r["at"]).timestamp()) + " Uhr"
+    except (KeyError, ValueError, TypeError):
+        pass
+    head = KINDS.get(r.get("kind"), r.get("kind", "")) + (f" (HTTP {r['http']})" if r.get("http") else "")
+    return " · ".join(x for x in (head + (f": {r['detail']}" if r.get("detail") else ""), when) if x)
+
+
+def _error_text(resp) -> str:
+    """Kernaussage einer Fehlerantwort (z. B. Gemini: error.message / status)."""
+    try:
+        data = resp.json()
+    except ValueError:
+        return resp.text[:300]
+    if isinstance(data, list) and data:
+        data = data[0]
+    err = data.get("error", data) if isinstance(data, dict) else {}
+    if isinstance(err, dict):
+        msg = err.get("message") or err.get("status") or ""
+        status = err.get("status") or err.get("type") or err.get("code") or ""
+        return f"{status}: {msg}".strip(": ")[:300] if status and str(status) not in msg else str(msg)[:300]
+    return str(err)[:300]
+
+
+def _retry_seconds(resp) -> float:
+    """Wartezeit aus Retry-After oder (Gemini) error.details[].retryDelay „34s“."""
+    try:
+        if resp.headers.get("retry-after"):
+            return float(resp.headers["retry-after"])
+    except ValueError:
+        pass
+    m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', resp.text or "")
+    return float(m.group(1)) if m else 0.0
+
+
+def _daily_quota(text: str) -> bool:
+    return bool(re.search(r"per ?day|PerDay|per_day|daily|RPD|requests per day|Tages", text or "", re.I))
+
+
+def _limit_hit(retry_after: str | None = None, reason: str = "Rate-Limit des Anbieters", resp=None) -> None:
     p = _p()
     p["fails"] += 1
-    try:
-        secs = float(retry_after) if retry_after else 0.0
-    except ValueError:
-        secs = 0.0
+    secs = 0.0
+    detail = ""
+    if resp is not None:
+        secs = _retry_seconds(resp)
+        detail = _error_text(resp)
+        if _daily_quota(resp.text):
+            reason = "Tageskontingent des Anbieters erschöpft"
+            # Gemini setzt Tageskontingente um Mitternacht pazifischer Zeit zurück, andere meist um 0 Uhr UTC
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("America/Los_Angeles") if provider_name() == "gemini" else timezone.utc
+            now = datetime.now(tz)
+            nxt = datetime(now.year, now.month, now.day, tzinfo=tz).timestamp() + 86400 + 60
+            secs = max(secs, nxt - time.time())
+        _record("limit", detail or reason, resp.status_code)
+    else:
+        try:
+            secs = float(retry_after) if retry_after else 0.0
+        except ValueError:
+            secs = 0.0
+        _record("limit", reason, 429)
     pause(secs or min(3600.0, 60.0 * 2 ** (p["fails"] - 1)), reason)
 
 
 def _ok() -> None:
+    _record("ok")
     p = _p()
     if p["fails"] or p["until"]:
         p.update(until=0.0, reason="", fails=0)
@@ -406,25 +488,33 @@ def _call_anthropic(user: str, system: str | None = None, schema: dict | None = 
             resp = client.messages.create(**kwargs)
     except anthropic.AuthenticationError:
         log.error("Anthropic API-Key ungültig – KI-Analyse übersprungen")
+        _record("auth", "API-Key ungültig", 401)
         pause(6 * 3600, "API-Key ungültig")
         return None
     except anthropic.RateLimitError as exc:
-        _limit_hit(exc.response.headers.get("retry-after") if exc.response is not None else None)
+        if exc.response is not None:
+            _limit_hit(resp=exc.response)
+        else:
+            _limit_hit()
         return None
     except anthropic.APIStatusError as exc:
         log.warning("Anthropic API-Fehler %s: %s", exc.status_code, exc.message)
         if exc.status_code in (429, 529):
             _limit_hit(exc.response.headers.get("retry-after"), "Anbieter überlastet")
-        elif exc.status_code >= 500:
-            pause(120, f"Störung beim Anbieter (HTTP {exc.status_code})")
+        else:
+            _record("error", str(exc.message), exc.status_code)
+            if exc.status_code >= 500:
+                pause(120, f"Störung beim Anbieter (HTTP {exc.status_code})")
         return None
     except anthropic.APIConnectionError as exc:
         log.warning("Anthropic API nicht erreichbar: %s", exc)
+        _record("offline", str(exc))
         pause(300, "Anbieter nicht erreichbar")
         return None
     _ok()
     if resp.stop_reason == "refusal":
         log.info("KI hat die Analyse abgelehnt – regelbasiert weiter")
+        _record("refused", "Das Modell hat die Analyse abgelehnt")
         return None
     return next((b.text for b in resp.content if getattr(b, "type", "") == "text"), "")
 
@@ -478,10 +568,11 @@ def _call_openai_compatible(user: str, system: str | None = None, schema: dict |
             resp = httpx.post(url, headers=_headers(), json=body, timeout=timeout)
         except httpx.HTTPError as exc:
             log.warning("KI-Anbieter %s nicht erreichbar: %s", provider_name(), exc)
+            _record("offline", f"{type(exc).__name__}: {exc}"[:300])
             pause(300, "Anbieter nicht erreichbar")
             return None
-        if resp.status_code in (429, 529):
-            _limit_hit(resp.headers.get("retry-after"))
+        if resp.status_code in (429, 529) or (resp.status_code == 503 and "overload" in resp.text.lower()):
+            _limit_hit(resp=resp)
             return None
         if resp.status_code in (400, 422) and level < 2:
             # Server kennt das strukturierte Format nicht -> einfacheres Format versuchen
@@ -492,10 +583,12 @@ def _call_openai_compatible(user: str, system: str | None = None, schema: dict |
         if resp.status_code in (401, 403):
             log.error("KI-Anbieter %s: Zugriff verweigert (HTTP %s) – API-Key prüfen", provider_name(),
                       resp.status_code)
+            _record("auth", _error_text(resp) or "API-Key prüfen", resp.status_code)
             pause(6 * 3600, "Zugriff verweigert – API-Key prüfen")
             return None
         if resp.status_code >= 400:
             log.warning("KI-Anbieter %s: HTTP %s %s", provider_name(), resp.status_code, resp.text[:200])
+            _record("error", _error_text(resp), resp.status_code)
             if resp.status_code >= 500:
                 pause(120, f"Störung beim Anbieter (HTTP {resp.status_code})")
             return None
@@ -505,11 +598,20 @@ def _call_openai_compatible(user: str, system: str | None = None, schema: dict |
             choice = resp.json()["choices"][0]
         except (ValueError, KeyError, IndexError, TypeError):
             log.warning("KI-Antwort unerwartet aufgebaut: %r", resp.text[:200])
+            _record("bad_answer", "unerwarteter Aufbau: " + resp.text[:200], resp.status_code)
             return None
         if choice.get("finish_reason") == "content_filter":
             log.info("KI-Anbieter hat die Analyse gefiltert – regelbasiert weiter")
+            _record("refused", "vom Inhaltsfilter des Anbieters blockiert")
             return None
-        return (choice.get("message") or {}).get("content") or ""
+        content = (choice.get("message") or {}).get("content") or ""
+        if not content.strip():
+            reason = choice.get("finish_reason") or "?"
+            log.warning("KI-Anbieter %s: leere Antwort (finish_reason=%s)", provider_name(), reason)
+            _record("bad_answer", f"leere Antwort (finish_reason={reason})" + (
+                " – Modell hat das Antwortlimit erreicht" if reason == "length" else ""), resp.status_code)
+            return None
+        return content
     return None
 
 
@@ -571,6 +673,7 @@ def _analyze(article: dict, candidates: list[dict]) -> dict | None:
     data = _parse_json(text)
     if not isinstance(data, dict):
         log.warning("KI-Antwort nicht lesbar: %r", (text or "")[:200])
+        _record("bad_answer", "kein gültiges JSON: " + (text or "")[:200])
         return None
     valid_ids = {c["id"] for c in candidates}
     try:
@@ -580,6 +683,8 @@ def _analyze(article: dict, candidates: list[dict]) -> dict | None:
     if data["match_topic_id"] not in valid_ids:
         data["match_topic_id"] = 0
     if data.get("sentiment") not in ("positiv", "neutral", "negativ"):
+        log.warning("KI-Antwort ohne gültige Tonalität: %r", str(data)[:200])
+        _record("bad_answer", f"Tonalität fehlt oder ungültig ({data.get('sentiment')!r})")
         return None
     data["begruendung"] = str(data.get("begruendung") or "")[:300]
     data["relevant"] = bool(data.get("relevant", True))
@@ -700,13 +805,16 @@ def _test_slot() -> str:
         return f"Tageslimit erreicht – weiter ab {_local(_next_utc_midnight())} Uhr"
     until, why = paused_until(), _p()["reason"]
     if until:
-        return (f"pausiert bis {_local(until)} Uhr ({why}) – "
-                "danach automatisch weiter")
+        r = last_result(current_slot())
+        return (f"pausiert bis {_local(until)} Uhr ({why}) – danach automatisch weiter"
+                + (f". Letzte Antwort: {describe_result(r)}" if r and r.get("kind") != "ok" else ""))
     last_problem.msg = ""
     res = _analyze({"title": "Volkswagen meldet Rekordabsatz bei Elektroautos", "summary": "",
                     "source": "Test", "published": datetime.now(timezone.utc).isoformat()}, [])
     if res is None:
-        return f"Fehlgeschlagen ({provider_name()} · {model()}): {last_problem.msg or 'keine verwertbare Antwort'}"
+        r = last_result(current_slot())
+        why = describe_result(r) if r and r.get("kind") != "ok" else (last_problem.msg or "keine Antwort erhalten")
+        return f"Fehlgeschlagen ({provider_name()} · {model()}): {why}"
     return f"OK ({provider_name()} · {model()}): {res.get('sentiment')} – {res.get('topic_title')}"
 
 

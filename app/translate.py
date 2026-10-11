@@ -205,8 +205,13 @@ def test_connection() -> str:
     p = provider()
     if not p:
         return describe()
+    if p == "llm" and not llm.ready():
+        return f"Übersetzung per KI derzeit nicht möglich: {llm.blocked_reason() or llm.missing()}"
     last_problem.msg = ""
     out, used = translate_texts(["Volkswagen recalls 50,000 cars over airbag problems"], "en")
     if out:
         return f"OK ({NAMES[used]}): „Volkswagen recalls …“ → {out[0]}"
-    return f"Fehlgeschlagen ({NAMES[p]}): {paused_reason() or last_problem.msg or llm.last_problem.msg or 'keine Antwort'}"
+    r = llm.last_result() if p == "llm" else None
+    why = paused_reason() or last_problem.msg or (llm.describe_result(r) if r and r.get("kind") != "ok" else "") \
+        or llm.last_problem.msg or "keine Antwort erhalten"
+    return f"Fehlgeschlagen ({NAMES[p]}): {why}"
