@@ -29,12 +29,27 @@ docker run -d --name vw-news -p 8000:8000 -v "$PWD/data:/data" vw-nachrichtenmon
 Passwort erzeugt und im Log ausgegeben (`docker logs vw-nachrichtenmonitor`) sowie in
 `data/admin_password.txt` abgelegt. Es kann unter `/admin` geändert werden.
 
-**Optional – KI-Analyse:** Mit `ANTHROPIC_API_KEY` (Umgebungsvariable oder im Admin-Bereich) bewertet
-Claude Relevanz, Themenzuordnung, Kurztitel, Abstract und Tonalität. Ohne Key arbeitet das System
-vollständig regelbasiert.
+**Optional – KI-Analyse:** Ein Sprachmodell bewertet dann Relevanz, Themenzuordnung, Kurztitel,
+Abstract und Tonalität. Ohne Konfiguration arbeitet das System vollständig regelbasiert.
+
+| `LLM_PROVIDER` | Anbindung | Pflichtangaben |
+|---|---|---|
+| `anthropic` (Standard) | offizielles Anthropic-SDK | `ANTHROPIC_API_KEY` (Modell optional, Standard `claude-opus-5-5`) |
+| `openai` | OpenAI-API | `LLM_MODEL`, `OPENAI_API_KEY` |
+| `azure` | Azure OpenAI | `LLM_MODEL` (= Deployment), `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
+| `gemini` | Google Gemini (OpenAI-kompatibler Endpoint) | `LLM_MODEL`, `GEMINI_API_KEY` |
+| `mistral` / `groq` / `openrouter` | jeweilige API | `LLM_MODEL`, `MISTRAL_API_KEY` / `GROQ_API_KEY` / `OPENROUTER_API_KEY` |
+| `ollama` | lokales Ollama (Standard: auf dem Docker-Host) | `LLM_MODEL`; optional `OLLAMA_HOST` |
+| `openai_compatible` | beliebiger OpenAI-kompatibler Server (LM Studio, vLLM, LiteLLM …) | `LLM_BASE_URL`, `LLM_MODEL`, ggf. `LLM_API_KEY` |
+
+Statt der anbieterspezifischen Key-Variablen kann immer `LLM_API_KEY` gesetzt werden, `LLM_BASE_URL`
+überschreibt die Standard-Adresse. Alles ist auch im Admin-Bereich einstellbar; „KI-Verbindung testen“
+prüft die Konfiguration. Strukturierte JSON-Ausgabe wird genutzt, wo der Anbieter sie unterstützt;
+sonst fällt das System automatisch auf einfachere Formate zurück.
 
 ```bash
 ADMIN_PASSWORD=meinPasswort ANTHROPIC_API_KEY=sk-ant-... docker compose up -d --build
+LLM_PROVIDER=ollama LLM_MODEL=llama3.1 docker compose up -d --build
 ```
 
 ## Seiten und Schnittstellen
@@ -62,11 +77,11 @@ Admin-Bereich überschrieben werden (der Admin-Wert hat Vorrang). Die wichtigste
 | `search_enabled` | an | Nachrichtensuche (Google News RSS mit `site:`) zusätzlich zu den Feeds |
 | `keywords_strong` / `keywords_brands` / `keywords_exclude` | siehe UI | Relevanzregeln (reguläre Ausdrücke) |
 | `cluster_threshold` / `cluster_window_days` | 0,34 / 6 | Wann Meldungen zum selben Thema zusammengefasst werden |
-| `llm_model` | claude-opus-5-5 | Modell für die KI-Analyse (z. B. `claude-haiku-5-5` für deutlich geringere Kosten) |
+| `llm_provider` / `llm_model` | anthropic / (Standard des Anbieters) | KI-Anbieter und Modell, auch per `LLM_PROVIDER` / `LLM_MODEL` |
 | `llm_for_backfill` | aus | KI auch für die Historie verwenden (viele tausend Aufrufe) |
 | `public_dashboard` | an | Übersicht ohne Login sichtbar |
 
-Weitere Umgebungsvariablen: `ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`, `DATA_DIR` (Standard `/data`),
+Weitere Umgebungsvariablen: `ADMIN_PASSWORD`, `LLM_*` und die Key-Variablen der Anbieter (siehe oben), `DATA_DIR` (Standard `/data`),
 `LOG_LEVEL`.
 
 ## Woher die Meldungen kommen
@@ -98,7 +113,7 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Aufbau: `app/fetcher.py` (Abruf), `app/relevance.py` (Relevanz), `app/sentiment.py` (Lexikon),
-`app/topics.py` (Themenbildung, TF-IDF-Kosinus), `app/llm.py` (Claude), `app/pipeline.py`
+`app/topics.py` (Themenbildung, TF-IDF-Kosinus), `app/llm.py` (KI-Anbieter), `app/pipeline.py`
 (Scans, Backfill, Zeitsteuerung), `app/main.py` (Web/API/Admin).
 
 Siehe auch [BERICHT.md](BERICHT.md) und [FRAGEN.md](FRAGEN.md).

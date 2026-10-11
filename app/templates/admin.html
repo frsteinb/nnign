@@ -14,7 +14,7 @@
     <dt>Backfill</dt><dd>{{ st.backfill.percent }} % ({{ st.backfill.done }} / {{ st.backfill.total }}) –
       {% for k, v in st.backfill.counts.items() %}{{ k }}: {{ v }}{{ ', ' if not loop.last }}{% endfor %}
       {% if st.backfill_running %}<br><span class="pulse"></span> {{ st.backfill_running.phase }} ({{ st.backfill_running.range }}){% endif %}</dd>
-    <dt>KI-Analyse</dt><dd>{{ 'aktiv' if st.llm_active else 'inaktiv (kein API-Key oder deaktiviert) – regelbasiert' }} · heute {{ st.llm_calls_today }} Aufrufe</dd>
+    <dt>KI-Analyse</dt><dd>{{ st.llm_status }} · heute {{ st.llm_calls_today }} Aufrufe</dd>
     <dt>Themen / Meldungen</dt><dd>{{ st.topics }} / {{ st.articles }}</dd>
   </dl>
   <div class="row">

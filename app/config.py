@@ -22,6 +22,7 @@ class Setting:
     help: str = ""
     group: str = "Allgemein"
     choices: list[str] = field(default_factory=list)
+    env: list[str] = field(default_factory=list)  # zusätzliche Umgebungsvariablen (Aliase)
 
 
 DEFAULT_STRONG = [
@@ -134,13 +135,34 @@ SETTINGS: list[Setting] = [
     Setting("sentiment_tie", "choice", "negativ", "Bewertung bei Gleichstand",
             "Wenn das Lexikon keine Tendenz erkennt.", "Themen", ["negativ", "positiv"]),
     # --- KI
-    Setting("llm_enabled", "bool", True, "KI-Analyse (Claude) verwenden",
-            "Nur aktiv, wenn ein API-Key gesetzt ist. Ohne Key arbeitet das System rein regelbasiert.", "KI"),
-    Setting("anthropic_api_key", "secret", "", "Anthropic API-Key",
-            "Alternativ Umgebungsvariable ANTHROPIC_API_KEY.", "KI"),
-    Setting("llm_model", "str", "claude-opus-5-5", "Modell",
-            "z. B. claude-opus-5-5 (Qualität) oder claude-haiku-5-5 (deutlich günstiger).", "KI"),
-    Setting("llm_effort", "choice", "low", "Denkaufwand (effort)", "", "KI", ["low", "medium", "high"]),
+    Setting("llm_enabled", "bool", True, "KI-Analyse verwenden",
+            "Nur aktiv, wenn Anbieter, Modell und ggf. API-Key gesetzt sind. Sonst arbeitet das System "
+            "rein regelbasiert.", "KI"),
+    Setting("llm_provider", "choice", "anthropic", "KI-Anbieter",
+            "anthropic = Claude (offizielles SDK); alle anderen über die OpenAI-kompatible Chat-Completions-"
+            "Schnittstelle. openai_compatible = beliebiger kompatibler Server (LM Studio, vLLM, LiteLLM …) "
+            "über die Basis-URL. Umgebungsvariable: LLM_PROVIDER.", "KI",
+            ["anthropic", "openai", "azure", "gemini", "mistral", "groq", "openrouter", "ollama",
+             "openai_compatible"], env=["LLM_PROVIDER"]),
+    Setting("llm_model", "str", "", "Modell",
+            "Leer = Standard des Anbieters (nur bei Anthropic vorhanden: claude-opus-5-5; günstiger: "
+            "claude-haiku-5-5). Bei allen anderen Anbietern Pflicht, bei Azure der Deployment-Name. "
+            "Umgebungsvariable: LLM_MODEL.", "KI", env=["LLM_MODEL"]),
+    Setting("llm_api_key", "secret", "", "API-Key",
+            "Leer = anbieterspezifische Umgebungsvariable (ANTHROPIC_API_KEY, OPENAI_API_KEY, "
+            "AZURE_OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY). "
+            "Ollama braucht keinen Key. Umgebungsvariable: LLM_API_KEY.", "KI", env=["LLM_API_KEY"]),
+    Setting("llm_base_url", "str", "", "Basis-URL",
+            "Leer = Standard des Anbieters. Bei Azure der Endpoint (https://<name>.openai.azure.com, "
+            "alternativ AZURE_OPENAI_ENDPOINT), bei Ollama z. B. http://host.docker.internal:11434/v1. "
+            "Umgebungsvariable: LLM_BASE_URL.", "KI", env=["LLM_BASE_URL"]),
+    Setting("azure_api_version", "str", "2024-10-21", "Azure: API-Version", "", "KI",
+            env=["AZURE_OPENAI_API_VERSION"]),
+    Setting("anthropic_api_key", "secret", "", "Anthropic API-Key (alt)",
+            "Wird verwendet, wenn beim Anbieter anthropic kein allgemeiner API-Key gesetzt ist. "
+            "Alternativ Umgebungsvariable ANTHROPIC_API_KEY.", "KI", env=["ANTHROPIC_API_KEY"]),
+    Setting("llm_effort", "choice", "low", "Denkaufwand (effort, nur Anthropic)", "", "KI",
+            ["low", "medium", "high"]),
     Setting("llm_for_backfill", "bool", False, "KI auch für historischen Backfill",
             "Achtung: bei 25 Jahren Historie viele tausend Aufrufe.", "KI"),
     Setting("llm_max_calls_per_day", "int", 1500, "Max. KI-Aufrufe pro Tag",
@@ -156,13 +178,12 @@ BY_KEY = {s.key: s for s in SETTINGS}
 
 
 def _env_value(s: Setting):
-    env_key = "NNIGN_" + s.key.upper()
-    raw = os.environ.get(env_key)
-    if raw is None and s.key == "anthropic_api_key":
-        raw = os.environ.get("ANTHROPIC_API_KEY")
-    if raw is None:
-        return None
-    return parse_value(s, raw)
+    """Wert aus NNIGN_<KEY> oder einem Alias; leere Variablen gelten als nicht gesetzt."""
+    for name in ["NNIGN_" + s.key.upper(), *s.env]:
+        raw = os.environ.get(name)
+        if raw is not None and raw.strip() != "":
+            return parse_value(s, raw)
+    return None
 
 
 def parse_value(s: Setting, raw: Any):

@@ -224,6 +224,7 @@ def status_info() -> dict:
         "initial_done": config.state_get("initial_done"),
         "backfill": pipeline.backfill_progress(),
         "llm_active": llm.available(),
+        "llm_status": llm.describe(),
         "llm_calls_today": llm.calls_today(),
     }
 

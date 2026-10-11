@@ -23,18 +23,33 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Leer = Passwort wird beim ersten Start erzeugt, im Log ausgegeben und in ./data abgelegt.
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      # Leer = rein regelbasierte Analyse ohne KI.
+      # KI-Analyse (optional). Ohne Konfiguration rein regelbasiert. Siehe .env.example.
+      LLM_PROVIDER: ${LLM_PROVIDER:-}        # anthropic (Standard), openai, azure, gemini, mistral, groq,
+                                             # openrouter, ollama, openai_compatible
+      LLM_MODEL: ${LLM_MODEL:-}              # leer = Standard (nur Anthropic); bei Azure: Deployment-Name
+      LLM_API_KEY: ${LLM_API_KEY:-}          # oder anbieterspezifisch, z. B. ANTHROPIC_API_KEY
+      LLM_BASE_URL: ${LLM_BASE_URL:-}        # eigene/kompatible Endpoints, Azure-Endpoint, Ollama-URL
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
       # Vorbelegungen (leer = eingebauter Standard)
-      NNIGN_SCAN_INTERVAL_HOURS: ${NNIGN_SCAN_INTERVAL_HOURS:-4}
-      NNIGN_BACKFILL_SINCE: ${NNIGN_BACKFILL_SINCE:-2000-01-01}
-      NNIGN_BACKFILL_ENABLED: ${NNIGN_BACKFILL_ENABLED:-true}
-      NNIGN_LLM_MODEL: ${NNIGN_LLM_MODEL:-claude-opus-5-5}
-      NNIGN_PUBLIC_DASHBOARD: ${NNIGN_PUBLIC_DASHBOARD:-true}
+      NNIGN_SCAN_INTERVAL_HOURS: ${NNIGN_SCAN_INTERVAL_HOURS:-}
+      NNIGN_BACKFILL_SINCE: ${NNIGN_BACKFILL_SINCE:-}
+      NNIGN_BACKFILL_ENABLED: ${NNIGN_BACKFILL_ENABLED:-}
+      NNIGN_PUBLIC_DASHBOARD: ${NNIGN_PUBLIC_DASHBOARD:-}
       # Nur nötig, wenn der Server ausschließlich über einen Proxy ins Internet kommt:
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       HTTP_PROXY: ${HTTP_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"          # erreicht z. B. ein Ollama auf dem Docker-Host
     logging:
       driver: json-file
       options:

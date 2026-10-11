@@ -30,10 +30,26 @@ class Mock:
 
     def __init__(self):
         self.routes = {}
+        self.post_routes = {}   # Pfad -> fn(body: dict, headers) -> (status, dict)
+        self.posts = []         # (Pfad, Header, Body) aller POST-Anfragen
         self.hits = []
         mock = self
 
         class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                path = urlsplit(self.path).path
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                mock.posts.append((self.path, dict(self.headers), body))
+                handler = mock.post_routes.get(path)
+                status, payload = handler(body, self.headers) if handler else (404, {"error": "unbekannt"})
+                data = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
             def do_GET(self):
                 mock.hits.append(self.path)
                 path = urlsplit(self.path).path
@@ -68,6 +84,11 @@ class Mock:
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
     mock = Mock()
+    for var in ("LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "GEMINI_API_KEY", "MISTRAL_API_KEY", "OLLAMA_HOST"):
+        monkeypatch.delenv(var, raising=False)
+    from app import llm as _llm
+    _llm._format_level.clear()
     monkeypatch.setenv("NNIGN_GNEWS_BASE", f"http://localhost:{mock.port}/gnews")
     monkeypatch.setenv("NNIGN_WAYBACK_BASE", mock.base)
     from app import db, fetcher
@@ -79,7 +100,7 @@ def env(tmp_path, monkeypatch):
     from app import config
     config.set("host_delay_seconds", 0)
     config.set("wayback_delay_seconds", 0)
-    config.set("anthropic_api_key", "")
+    config.reset("anthropic_api_key")
     from app import pipeline
     pipeline._breaker_counts.clear()
     yield mock
