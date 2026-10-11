@@ -503,6 +503,26 @@ def translate(texts: list[str], source_lang: str) -> list[str] | None:
     return [str(x) for x in out]
 
 
+def list_models() -> tuple[list[str], str]:
+    """Verfügbare Modelle beim eingerichteten Anbieter abfragen (OpenAI-kompatibles /models).
+    Rückgabe: (Modellnamen, Fehlermeldung)."""
+    if provider_name() in ("anthropic", "azure"):
+        return [], "Für diesen Anbieter nicht verfügbar – Modellnamen siehe Anbieter-Dokumentation."
+    if PROVIDERS[provider_name()].needs_key and not api_key():
+        return [], "Zuerst einen API-Key eintragen."
+    try:
+        resp = httpx.get(base_url() + "/models", headers=_headers(), timeout=float(config.get("request_timeout")))
+    except httpx.HTTPError as exc:
+        return [], f"Anbieter nicht erreichbar: {exc}"
+    if resp.status_code >= 400:
+        return [], f"HTTP {resp.status_code}: {resp.text[:200]}"
+    try:
+        ids = [str(m.get("id", "")).removeprefix("models/") for m in resp.json().get("data", [])]
+    except (ValueError, AttributeError):
+        return [], "Antwort nicht lesbar"
+    return sorted(i for i in ids if i), ""
+
+
 def test_connection() -> str:
     """Für den Admin-Button: kleiner Testaufruf."""
     reason = missing()

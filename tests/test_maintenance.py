@@ -209,3 +209,12 @@ def test_deepl_quota_pauses_translation(env):
     n = len(env.posts)
     translate.translate_texts(["VW sales rise"], "en")
     assert len(env.posts) == n                     # während der Pause keine Anfragen
+
+
+def test_list_models(env):
+    from app import config, llm
+    env.routes["/v1/models"] = lambda p: (json.dumps({"data": [{"id": "models/gemini-x-flash"}, {"id": "embedding-1"}]}).encode(),
+                                          "application/json")
+    _openai_mock(env, lambda b: _answer(GOOD))
+    config.set("llm_provider", "gemini")
+    assert llm.list_models() == (["embedding-1", "gemini-x-flash"], "")

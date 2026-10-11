@@ -859,6 +859,16 @@ def admin_regroup(_=Depends(require_admin)):
                 "Fortschritt auf der Startseite.")
 
 
+@app.post("/admin/llm-models")
+def admin_llm_models(_=Depends(require_admin)):
+    ids, err = llm.list_models()
+    if err:
+        return back("Modelle: " + err, "einstellungen")
+    text_models = [i for i in ids if not any(x in i for x in ("embed", "image", "tts", "audio", "vision", "aqa"))]
+    return back(f"{len(text_models)} Modelle bei {llm.provider_name()}: " + ", ".join(text_models[:40])
+                + (" …" if len(text_models) > 40 else "") + " – Namen in „Modell“ eintragen.", "einstellungen")
+
+
 @app.post("/admin/llm-test")
 def admin_llm_test(_=Depends(require_admin)):
     return back("KI-Test: " + llm.test_connection(), "einstellungen")
