@@ -22,11 +22,15 @@ fasst sie zu **Nachrichtenthemen** zusammen, bewertet jedes Thema als **positiv*
 ## Schnellstart
 
 ```bash
+cp .env.example .env          # enthält PORT=8000
 docker compose up -d --build
 ```
 
-Dann <http://localhost:8000> öffnen. Optionale Einstellungen (Port, Admin-Passwort, API-Key, Proxy …)
-kommen in eine Datei `.env` neben `docker-compose.yml`; Vorlage: `cp .env.example .env`.
+Dann <http://localhost:8000> öffnen. Einstellungen (Port, Admin-Passwort, API-Key, Proxy …) stehen in
+`.env` neben `docker-compose.yml`; die Datei ist optional und wird komplett in den Container übernommen.
+**Der Port wird nur veröffentlicht, wenn `PORT` gesetzt ist** (z. B. `PORT=8000` oder
+`PORT=127.0.0.1:8000` für nur lokal). Ohne `PORT` ist nnign nur im Docker-Netz erreichbar
+(`http://nnign:8000`), etwa hinter einem Reverse-Proxy. Benötigt Docker Compose ≥ 2.24.
 Die Daten liegen in `./data`. Ohne Docker Compose:
 
 ```bash

@@ -1,23 +1,43 @@
 # nnign – No News Is Good News (Nachrichtenmonitor für den VW-Konzern)
 #
-#   docker compose up -d --build      starten (Weboberfläche: http://localhost:8000)
+#   docker compose up -d --build      starten
+#                                     Weboberfläche: http://localhost:<PORT>, wenn PORT in .env gesetzt ist
 #   docker compose logs -f            Protokoll ansehen (enthält beim ersten Start das Admin-Passwort)
 #   docker compose down               stoppen (Daten in ./data bleiben erhalten)
 #
-# Optionale Einstellungen in einer Datei .env neben dieser Datei (Vorlage: .env.example).
+# Optionale Einstellungen in einer Datei .env neben dieser Datei (Vorlage: .env.example). Fehlt sie,
+# startet nnign mit Standardwerten. Alle Variablen aus .env werden zusätzlich in den Container übernommen.
+#
+# Port: Nur wenn PORT in .env (oder der Shell) gesetzt ist, wird der Container nach außen veröffentlicht,
+# z. B. PORT=8000 oder PORT=127.0.0.1:8000 (nur lokal). Ohne PORT ist nnign nur im Docker-Netz
+# erreichbar (http://nnign:8000), etwa für einen Reverse-Proxy im selben Netz.
+# Benötigt Docker Compose ab Version 2.24.
 # Alle NNIGN_*-Werte lassen sich später auch im Admin-Bereich (/admin) ändern; dort gespeicherte
 # Werte haben Vorrang vor diesen Umgebungsvariablen.
 
 name: nnign
 
 services:
+  # Vorlagen für die Port-Freigabe (werden nie selbst gestartet). nnign erbt von „_intern“ oder –
+  # wenn PORT gesetzt ist – von „_intern_published“.
+  _intern:
+    profiles: ["_vorlage"]
+  _intern_published:
+    profiles: ["_vorlage"]
+    ports:
+      - "${PORT:-8000}:8000"
+
   nnign:
+    extends:
+      service: _intern${PORT:+_published}
+    profiles: !reset []
     build: .
     image: nnign:latest
     container_name: nnign
     restart: unless-stopped
-    ports:
-      - "${PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./data:/data                                   # SQLite-Datenbank und admin_password.txt
     environment:
