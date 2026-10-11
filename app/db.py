@@ -1,0 +1,157 @@
+"""SQLite-Persistenz. Eine Datei, keine externen Dienste."""
+from __future__ import annotations
+
+import os
+import sqlite3
+import threading
+from contextlib import contextmanager
+from datetime import datetime, timezone
+
+DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.getcwd(), "data"))
+DB_PATH = os.environ.get("DB_PATH", os.path.join(DATA_DIR, "vw_news.sqlite3"))
+
+_local = threading.local()
+_write_lock = threading.RLock()
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sources (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    domain        TEXT NOT NULL,
+    feeds         TEXT NOT NULL DEFAULT '',   -- RSS/Atom-URLs, eine pro Zeile
+    use_search    INTEGER NOT NULL DEFAULT 1, -- zusätzlich Google-News-Suche mit site:domain
+    archive_template TEXT NOT NULL DEFAULT '', -- URL-Vorlage einer Archivseite, z. B. .../artikel-{DD}.{MM}.{YYYY}.html
+    archive_step  TEXT NOT NULL DEFAULT 'day', -- day | week | month | year
+    archive_since TEXT NOT NULL DEFAULT '',   -- frühestes Datum der Archivseiten
+    link_pattern  TEXT NOT NULL DEFAULT '',   -- Regex, dem Artikel-Links auf Archivseiten entsprechen müssen
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    last_fetch_at TEXT,
+    last_status   TEXT,
+    last_items    INTEGER,
+    created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS topics (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    title              TEXT NOT NULL,
+    abstract           TEXT NOT NULL DEFAULT '',
+    sentiment          TEXT NOT NULL,            -- 'positiv' | 'negativ'
+    sentiment_score    REAL NOT NULL DEFAULT 0,
+    sentiment_origin   TEXT NOT NULL DEFAULT 'lexikon', -- lexikon | llm | manuell
+    first_published_at TEXT NOT NULL,            -- erstes Erscheinungsdatum einer Quelle
+    last_published_at  TEXT NOT NULL,
+    signature          TEXT NOT NULL DEFAULT '{}', -- Token-Gewichte für die Themenzuordnung
+    created_at         TEXT NOT NULL,            -- Erfassungsdatum im System
+    updated_at         TEXT NOT NULL,
+    article_count      INTEGER NOT NULL DEFAULT 0,
+    hidden             INTEGER NOT NULL DEFAULT 0,
+    locked             INTEGER NOT NULL DEFAULT 0 -- vom Admin bearbeitet: nicht automatisch überschreiben
+);
+CREATE INDEX IF NOT EXISTS idx_topics_first ON topics(first_published_at);
+CREATE INDEX IF NOT EXISTS idx_topics_updated ON topics(updated_at);
+CREATE INDEX IF NOT EXISTS idx_topics_last ON topics(last_published_at);
+
+CREATE TABLE IF NOT EXISTS articles (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    url           TEXT NOT NULL UNIQUE,
+    title         TEXT NOT NULL,
+    title_key     TEXT NOT NULL,
+    summary       TEXT NOT NULL DEFAULT '',
+    source_name   TEXT NOT NULL,
+    source_domain TEXT NOT NULL,
+    published_at  TEXT NOT NULL,
+    fetched_at    TEXT NOT NULL,
+    via           TEXT NOT NULL,                 -- rss | suche
+    relevant      INTEGER NOT NULL DEFAULT 1,
+    sentiment_score REAL NOT NULL DEFAULT 0,
+    topic_id      INTEGER REFERENCES topics(id) ON DELETE SET NULL,
+    UNIQUE(title_key, source_domain)
+);
+CREATE INDEX IF NOT EXISTS idx_articles_topic ON articles(topic_id);
+CREATE INDEX IF NOT EXISTS idx_articles_pub ON articles(published_at);
+
+CREATE TABLE IF NOT EXISTS token_df (
+    token TEXT PRIMARY KEY,
+    df    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS backfill_tasks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id    INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+    method       TEXT NOT NULL,                  -- archive | wayback_index | wayback_feed | search
+    target       TEXT NOT NULL,                  -- URL bzw. Suchanfrage
+    period_start TEXT NOT NULL,                  -- Datum, für das die Aufgabe steht (Sortierung)
+    period_end   TEXT NOT NULL,
+    priority     INTEGER NOT NULL DEFAULT 0,      -- Grob-nach-fein-Reihenfolge
+    status       TEXT NOT NULL DEFAULT 'offen',  -- offen | ok | fehler
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    items        INTEGER NOT NULL DEFAULT 0,
+    relevant     INTEGER NOT NULL DEFAULT 0,
+    error        TEXT NOT NULL DEFAULT '',
+    done_at      TEXT,
+    UNIQUE(method, target)
+);
+CREATE INDEX IF NOT EXISTS idx_backfill_open ON backfill_tasks(status, priority, attempts, period_start);
+
+CREATE TABLE IF NOT EXISTS runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT NOT NULL,                  -- initial | regulär | manuell
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT,
+    status       TEXT NOT NULL DEFAULT 'läuft',  -- läuft | ok | fehler
+    fetched      INTEGER NOT NULL DEFAULT 0,
+    candidates   INTEGER NOT NULL DEFAULT 0,
+    new_articles INTEGER NOT NULL DEFAULT 0,
+    new_topics   INTEGER NOT NULL DEFAULT 0,
+    llm_calls    INTEGER NOT NULL DEFAULT 0,
+    log          TEXT NOT NULL DEFAULT ''
+);
+"""
+
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def connect() -> sqlite3.Connection:
+    conn = getattr(_local, "conn", None)
+    if conn is None or getattr(_local, "path", None) != DB_PATH:
+        os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
+        conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        _local.conn = conn
+        _local.path = DB_PATH
+    return conn
+
+
+@contextmanager
+def tx():
+    """Schreib-Transaktion; serialisiert Schreibzugriffe aus mehreren Threads."""
+    with _write_lock:
+        conn = connect()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def query(sql: str, params=()) -> list[sqlite3.Row]:
+    return connect().execute(sql, params).fetchall()
+
+
+def query_one(sql: str, params=()):
+    return connect().execute(sql, params).fetchone()
+
+
+def init_db() -> None:
+    with tx() as conn:
+        conn.executescript(SCHEMA)
