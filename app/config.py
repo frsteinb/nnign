@@ -54,6 +54,8 @@ DEFAULT_STRONG = [
     r"Elli (?:Mobility|Group|Ladestrom|Ladekarte)",
     r"Everllence",
     r"Italdesign",
+    r"Electrify Canada",
+    r"Cellforce",                     # Batteriezellen-Tochter von Porsche
     # Konzernmanager (Titel nennen oft nur den Namen)
     r"Arno Antlitz",
     r"Antlitz",
@@ -113,6 +115,16 @@ DEFAULT_PARTNERS = [
     r"Umicore",
     r"IONWAY",
     r"24M Technologies",
+    r"Patriot Battery Metals",            # PowerCo-Beteiligung, Lithium aus Kanada
+    # Beteiligungen von Porsche, Traton und Konzern
+    r"Rimac\w*",                          # Porsche-Beteiligung, Bugatti Rimac (Joint Venture)
+    r"Bugatti Rimac",
+    r"Sinotruk|China National Heavy Duty Truck",   # Traton/MAN-Beteiligung
+    r"中国重汽",
+    r"Europcar\w*",                       # Übernahme durch Konsortium unter VW-Führung (2022)
+    r"Ionity|IONITY",                     # Schnellladenetz, Gemeinschaftsunternehmen mit Konzernbeteiligung
+    r"Argo AI",                           # Beteiligung am autonomen Fahren (2020–2022)
+    r"International Motors",              # früher Navistar, Traton-Tochter in Nordamerika
 ]
 
 DEFAULT_BRANDS = [
@@ -201,7 +213,8 @@ SETTINGS: list[Setting] = [
     Setting("search_query", "str", "Volkswagen OR VW OR Audi OR Porsche OR Skoda OR Seat OR Cupra OR Traton OR Cariad",
             "Suchanfrage (deutsch/englisch)", "Wird um site:<domain> und Zeitfenster ergänzt; gilt für deutsch- "
             "und englischsprachige Quellen.", "Abruf"),
-    Setting("search_query_partners", "str", "Gotion OR Rivian OR Xpeng OR SAIC OR \"Scout Motors\" OR PowerCo",
+    Setting("search_query_partners", "str", "Gotion OR Rivian OR Xpeng OR SAIC OR \"Scout Motors\" OR PowerCo OR Rimac OR "
+            "Europcar OR Sinotruk OR Ionity OR Mobileye OR \"Horizon Robotics\"",
             "Zusätzliche Suchbegriffe für Partner",
             "Werden der Suchanfrage angehängt, wenn Partner einbezogen sind.", "Abruf"),
     Setting("search_query_zh", "str", "大众汽车 OR 奥迪 OR 保时捷 OR 斯柯达 OR 一汽-大众 OR 上汽大众",

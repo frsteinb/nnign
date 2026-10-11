@@ -81,6 +81,10 @@ def test_partners_are_relevant_and_marked(env):
     assert m.scope("VW und Xpeng bauen gemeinsames Modell", "") == "konzern"
     assert m.scope("Scout Motors eröffnet Werk", "") == "konzern"                # eigene Tochter
     assert m.score("Boy Scouts feiern Jubiläum", "") == 0
+    for t in ["Rimac stellt neuen Hypersportwagen vor", "Europcar senkt Prognose", "Sinotruk steigert Absatz",
+              "Ionity eröffnet 1000. Ladepark"]:
+        assert m.scope(t, "") == "partner", t
+    assert m.scope("Cellforce stoppt Zellfertigung", "") == "konzern"
 
 
 def test_partner_scope_in_pipeline_and_filter(env):
