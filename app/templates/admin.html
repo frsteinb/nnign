@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Admin – VW-Nachrichtenmonitor{% endblock %}
+{% block content %}
+<h1>Administration</h1>
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+{% set st = status %}
+
+<section class="card" id="status">
+  <h2>Status</h2>
+  <dl class="facts">
+    <dt>Initial-Scan</dt><dd>{{ st.initial_done|dt if st.initial_done else 'noch nicht abgeschlossen' }}</dd>
+    <dt>Laufender Scan</dt><dd>{{ st.scan_running.kind ~ ': ' ~ st.scan_running.phase if st.scan_running else '–' }}</dd>
+    <dt>Nächster Scan</dt><dd>{{ st.next_scan_at|dt }}</dd>
+    <dt>Backfill</dt><dd>{{ st.backfill.percent }} % ({{ st.backfill.done }} / {{ st.backfill.total }}) –
+      {% for k, v in st.backfill.counts.items() %}{{ k }}: {{ v }}{{ ', ' if not loop.last }}{% endfor %}
+      {% if st.backfill_running %}<br><span class="pulse"></span> {{ st.backfill_running.phase }} ({{ st.backfill_running.range }}){% endif %}</dd>
+    <dt>KI-Analyse</dt><dd>{{ 'aktiv' if st.llm_active else 'inaktiv (kein API-Key oder deaktiviert) – regelbasiert' }} · heute {{ st.llm_calls_today }} Aufrufe</dd>
+    <dt>Themen / Meldungen</dt><dd>{{ st.topics }} / {{ st.articles }}</dd>
+  </dl>
+  <div class="row">
+    <form method="post" action="/admin/scan"><button>Jetzt scannen</button></form>
+    <form method="post" action="/admin/initial"><button>Initial-Scan wiederholen</button></form>
+    <form method="post" action="/admin/backfill/plan"><button>Backfill (neu) planen</button></form>
+    <form method="post" action="/admin/backfill/reset"><button>Fehlgeschlagene Aufgaben wiederholen</button></form>
+    <form method="post" action="/admin/llm-test"><button>KI-Verbindung testen</button></form>
+  </div>
+</section>
+
+<section class="card" id="backfill">
+  <h2>Historischer Backfill je Quelle</h2>
+  <p class="muted small">archive = Archivseiten des Mediums · search = Nachrichtensuche in Zeitfenstern ·
+    wayback_* = Schnappschüsse der Feeds im Internet Archive. Die Reihenfolge ist grob-nach-fein: zuerst ein
+    Überblick über alle Jahre, dann zunehmend lückenlos.</p>
+  <div class="scroll"><table class="list">
+    <thead><tr><th>Quelle</th><th>Methode</th><th>offen</th><th>ok</th><th>Fehler</th><th>gestoppt</th><th>relevante Treffer</th><th>frühestes erledigtes Datum</th></tr></thead>
+    <tbody>{% for r in st.backfill.per_source %}
+      <tr><td>{{ r.name }}</td><td>{{ r.method }}</td><td>{{ r.offen }}</td><td>{{ r.ok }}</td><td>{{ r.fehler }}</td><td>{{ r.skipped }}</td><td>{{ r.relevant }}</td><td>{{ r.earliest or '–' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if failed %}
+  <details><summary>Letzte Fehler ({{ failed|length }})</summary>
+    <table class="list small"><tbody>{% for f in failed %}
+      <tr><td>{{ f.name }}</td><td>{{ f.method }}</td><td>{{ f.period_start }}</td><td>{{ f.status }}</td><td class="wrap">{{ f.error }}</td></tr>
+    {% endfor %}</tbody></table>
+  </details>
+  {% endif %}
+</section>
+
+<section class="card" id="einstellungen">
+  <h2>Einstellungen</h2>
+  <p class="muted small">Herkunft: <em>default</em> = eingebaut, <em>env</em> = Umgebungsvariable NNIGN_&lt;NAME&gt;, <em>admin</em> = hier gespeichert (hat Vorrang).</p>
+  <form method="post" action="/admin/settings" class="settings">
+    {% for group, items in groups.items() %}
+      <fieldset><legend>{{ group }}</legend>
+      {% for it in items %}{% set s = it.s %}
+        <div class="setting">
+          <label for="f-{{ s.key }}">{{ s.label }} <span class="origin {{ it.origin }}">{{ it.origin }}</span></label>
+          {% if s.type == 'bool' %}
+            <input id="f-{{ s.key }}" type="checkbox" name="{{ s.key }}" {{ 'checked' if it.value }}>
+          {% elif s.type == 'list' %}
+            <textarea id="f-{{ s.key }}" name="{{ s.key }}" rows="6">{{ it.value }}</textarea>
+          {% elif s.type == 'choice' %}
+            <select id="f-{{ s.key }}" name="{{ s.key }}">{% for c in s.choices %}<option {{ 'selected' if c == it.value }}>{{ c }}</option>{% endfor %}</select>
+          {% elif s.type == 'secret' %}
+            <input id="f-{{ s.key }}" type="password" name="{{ s.key }}" value="{{ it.value }}" autocomplete="off">
+          {% else %}
+            <input id="f-{{ s.key }}" name="{{ s.key }}" value="{{ it.value }}" {{ 'inputmode=decimal' if s.type in ('int','float') }}>
+          {% endif %}
+          {% if s.help %}<div class="help">{{ s.help }}</div>{% endif %}
+          {% if it.origin == 'admin' %}<button class="link" form="reset-{{ s.key }}">auf Standard</button>{% endif %}
+        </div>
+      {% endfor %}
+      </fieldset>
+    {% endfor %}
+    <button type="submit">Einstellungen speichern</button>
+  </form>
+  {% for group, items in groups.items() %}{% for it in items %}{% if it.origin == 'admin' %}
+    <form id="reset-{{ it.s.key }}" method="post" action="/admin/settings/reset/{{ it.s.key }}"></form>
+  {% endif %}{% endfor %}{% endfor %}
+</section>
+
+<section class="card" id="quellen">
+  <h2>Quellen</h2>
+  <p class="muted small">Archiv-Vorlage: Platzhalter {YYYY} {MM} {DD} {M} {D} {WW}. Link-Muster: regulärer Ausdruck, dem Artikel-URLs auf Archivseiten entsprechen müssen. Nach Änderungen „Backfill (neu) planen“.</p>
+  {% for s in sources %}
+  <details class="source">
+    <summary><strong>{{ s.name }}</strong> <span class="muted">{{ s.domain }}</span>
+      {% if not s.enabled %}<span class="badge">deaktiviert</span>{% endif %}
+      <span class="muted small">· {{ s.last_fetch_at|dt }} · {{ s.last_items if s.last_items is not none else '–' }} Meldungen ·
+        <span class="{{ 'ok' if s.last_status == 'ok' else 'warn' }}">{{ (s.last_status or '–')[:120] }}</span></span></summary>
+    {% with s=s, action='/admin/sources/' ~ s.id %}{% include "source_form.html" %}{% endwith %}
+    <form method="post" action="/admin/sources/{{ s.id }}/delete" onsubmit="return confirm('Quelle löschen?')"><button class="danger">Quelle löschen</button></form>
+  </details>
+  {% endfor %}
+  <details class="source"><summary><strong>+ Neue Quelle</strong></summary>
+    {% with s=None, action='/admin/sources' %}{% include "source_form.html" %}{% endwith %}
+  </details>
+</section>
+
+<section class="card" id="laeufe">
+  <h2>Letzte Scans</h2>
+  <div class="scroll"><table class="list">
+    <thead><tr><th>#</th><th>Art</th><th>Start</th><th>Status</th><th>abgerufen</th><th>neu relevant</th><th>gespeichert</th><th>neue Themen</th><th>KI</th></tr></thead>
+    <tbody>{% for r in runs %}
+      <tr><td><a href="/admin/runs/{{ r.id }}">{{ r.id }}</a></td><td>{{ r.kind }}</td><td>{{ r.started_at|dt }}</td><td>{{ r.status }}</td>
+        <td>{{ r.fetched }}</td><td>{{ r.candidates }}</td><td>{{ r.new_articles }}</td><td>{{ r.new_topics }}</td><td>{{ r.llm_calls }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <h2>Admin-Passwort ändern</h2>
+  <form method="post" action="/admin/password" class="row">
+    <input type="password" name="new" minlength="8" placeholder="neues Passwort" required autocomplete="new-password">
+    <button>Ändern</button>
+  </form>
+</section>
+{% endblock %}
