@@ -93,11 +93,11 @@
 {% set st = status %}
 {% set sx = stats %}
 {% if is_admin(request) %}{% if msg and not select %}<div class="flash">{{ msg }}</div>{% endif %}{% include "_suggestions.html" %}{% endif %}
-{{ statbox(stats_all, false) }}
-{{ chartbox(timeline_all, max_all, '', true) }}
 <section class="activity" id="activity" aria-live="polite" data-topics="{{ status.topics }}">
 {% include "_activity.html" %}
 </section>
+{{ statbox(stats_all, false) }}
+{{ chartbox(timeline_all, max_all, '', true) }}
 
 <hr class="divider" id="gefiltert">
 
