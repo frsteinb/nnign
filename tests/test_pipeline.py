@@ -44,8 +44,8 @@ def test_initial_scan_clusters_and_filters(env):
 def test_backfill_archive_and_wayback(env):
     from app import config, db, fetcher, pipeline
     setup_world(env)
-    config.set("backfill_since", "2015-09-18")
-    config.set("backfill_until", "2015-09-24")
+    config.set("collect_since", "2015-09-18")
+    config.set("collect_until", "2015-09-24")
     pipeline.run_scan("initial")
     progress = pipeline.backfill_progress()
     assert progress["total"] > 0
@@ -81,8 +81,8 @@ def test_breaker_stops_broken_archive(env):
     with db.tx() as conn:
         conn.execute("UPDATE sources SET archive_template=?, archive_since='' WHERE name='Testmedium A'",
                      (f"{env.base}/gibtsnicht/{{YYYY}}{{MM}}{{DD}}",))
-    config.set("backfill_since", "2010-01-01")
-    config.set("backfill_until", "2010-03-31")
+    config.set("collect_since", "2010-01-01")
+    config.set("collect_until", "2010-03-31")
     config.set("backfill_wayback", False)
     config.set("backfill_wayback_fallback", False)
     config.set("search_enabled", False)

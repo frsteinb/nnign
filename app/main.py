@@ -5,9 +5,11 @@ import csv
 import hashlib
 import hmac
 import io
+import json
 import logging
 import os
 import secrets
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
@@ -19,14 +21,14 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, db, llm, pipeline, sources, topics
+from . import config, db, llm, pipeline, prompts, sentiment, sources, topics
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -105,6 +107,7 @@ def maybe_public(request: Request) -> None:
 async def lifespan(app: FastAPI):
     db.init_db()
     sources.seed_sources()
+    pipeline.ensure_default_period()
     init_admin_password()
     if os.environ.get("NNIGN_DISABLE_SCHEDULER") != "1":
         pipeline.start_background()
@@ -133,6 +136,7 @@ def fmt_dt(value, fmt="%d.%m.%Y %H:%M"):
 templates.env.filters["dt"] = fmt_dt
 templates.env.filters["d"] = lambda v: fmt_dt(v, "%d.%m.%Y")
 templates.env.globals["version"] = VERSION
+templates.env.globals["symbol"] = {"positiv": "▲", "neutral": "●", "negativ": "▼"}
 
 
 # ====================================================================== Abfragen
@@ -146,7 +150,7 @@ def topic_filters(q: str = "", sentiment: str = "", year: str = "", source: str 
         where.append("(t.title LIKE ? OR t.abstract LIKE ? OR EXISTS (SELECT 1 FROM articles a2 WHERE "
                      "a2.topic_id=t.id AND a2.title LIKE ?))")
         params += [f"%{q}%"] * 3
-    if sentiment in ("positiv", "negativ"):
+    if sentiment in ("positiv", "neutral", "negativ"):
         where.append("t.sentiment=?")
         params.append(sentiment)
     if year.isdigit():
@@ -185,7 +189,7 @@ def list_topics(args: dict, page: int, page_size: int, order: str = "new"):
 
 
 def timeline(args: dict):
-    """Positive/negative Themen je Jahr (oder je Monat, wenn ein Jahr gewählt ist)."""
+    """Positive/neutrale/negative Themen je Jahr (oder je Monat, wenn ein Jahr gewählt ist)."""
     a = dict(args)
     year = a.pop("year", "")
     a.pop("sentiment", None)
@@ -196,26 +200,56 @@ def timeline(args: dict):
         params = [*params, year]
     else:
         key = "substr(t.first_published_at,1,4)"
-    rows = db.query(f"SELECT {key} k, SUM(t.sentiment='positiv') pos, SUM(t.sentiment='negativ') neg "
-                    f"FROM topics t{where} GROUP BY k ORDER BY k", params)
-    data = {r["k"]: (r["pos"] or 0, r["neg"] or 0) for r in rows}
+    rows = db.query(f"SELECT {key} k, SUM(t.sentiment='positiv') pos, SUM(t.sentiment='neutral') neu, "
+                    f"SUM(t.sentiment='negativ') neg FROM topics t{where} GROUP BY k ORDER BY k", params)
+    data = {r["k"]: (r["pos"] or 0, r["neu"] or 0, r["neg"] or 0) for r in rows}
     if year.isdigit():
         keys = [f"{year}-{m:02d}" for m in range(1, 13)]
     else:
         first = int(min(data)) if data else datetime.now().year
-        start = min(first, int((config.get("backfill_since") or "2000")[:4] or 2000))
+        start = min(first, pipeline.period()[0].year)
         keys = [str(y) for y in range(start, datetime.now().year + 1)]
-    return [{"key": k, "pos": data.get(k, (0, 0))[0], "neg": data.get(k, (0, 0))[1]} for k in keys]
+    return [{"key": k, "pos": data.get(k, (0, 0, 0))[0], "neu": data.get(k, (0, 0, 0))[1],
+             "neg": data.get(k, (0, 0, 0))[2]} for k in keys]
+
+
+def stats(args: dict) -> dict:
+    """Kompakte Statistik zum aktuell ausgewählten Datenbestand."""
+    where, params = topic_filters(**args)
+    t = db.query_one(
+        f"SELECT COUNT(*) n, SUM(t.sentiment='positiv') pos, SUM(t.sentiment='neutral') neu, "
+        f"SUM(t.sentiment='negativ') neg, SUM(t.article_count) arts, MIN(t.first_published_at) first, "
+        f"MAX(t.last_published_at) last, SUM(t.article_count > 1) multi, "
+        f"SUM(t.sentiment_origin='lexikon') o_lex, SUM(t.sentiment_origin='llm') o_llm, "
+        f"SUM(t.sentiment_origin='manuell') o_man FROM topics t{where}", params)
+    n = t["n"] or 0
+
+    def pct(x):
+        return round(100 * (x or 0) / n) if n else 0
+
+    media = db.query(
+        f"SELECT a.source_name name, COUNT(DISTINCT a.topic_id) c FROM articles a JOIN topics t ON t.id=a.topic_id"
+        f"{where} GROUP BY a.source_name ORDER BY c DESC", params)
+    return {
+        "topics": n, "articles": t["arts"] or 0, "first": t["first"], "last": t["last"],
+        "pos": t["pos"] or 0, "neu": t["neu"] or 0, "neg": t["neg"] or 0,
+        "pos_pct": pct(t["pos"]), "neu_pct": pct(t["neu"]), "neg_pct": pct(t["neg"]),
+        "multi_pct": pct(t["multi"]), "per_topic": round((t["arts"] or 0) / n, 1) if n else 0,
+        "media_count": len(media), "top_media": [dict(m) for m in media[:5]],
+        "origin": {"Regeln": t["o_lex"] or 0, "KI": t["o_llm"] or 0, "manuell": t["o_man"] or 0},
+        "filtered": any(args.values()),
+    }
 
 
 def status_info() -> dict:
     counts = db.query_one(
-        "SELECT COUNT(*) n, SUM(sentiment='positiv') pos, SUM(sentiment='negativ') neg, "
-        "MIN(first_published_at) first FROM topics WHERE hidden=0")
+        "SELECT COUNT(*) n, SUM(sentiment='positiv') pos, SUM(sentiment='neutral') neu, "
+        "SUM(sentiment='negativ') neg, MIN(first_published_at) first FROM topics WHERE hidden=0")
     arts = db.query_one("SELECT COUNT(*) n FROM articles WHERE relevant=1")["n"]
     last = db.query_one("SELECT * FROM runs ORDER BY id DESC LIMIT 1")
     return {
-        "topics": counts["n"] or 0, "positive": counts["pos"] or 0, "negative": counts["neg"] or 0,
+        "topics": counts["n"] or 0, "positive": counts["pos"] or 0, "neutral": counts["neu"] or 0,
+        "negative": counts["neg"] or 0,
         "earliest_topic": counts["first"], "articles": arts,
         "last_run": dict(last) if last else None,
         "scan_running": pipeline.STATUS["scan"],
@@ -226,6 +260,7 @@ def status_info() -> dict:
         "llm_active": llm.available(),
         "llm_status": llm.describe(),
         "llm_calls_today": llm.calls_today(),
+        "reclassify_running": pipeline.STATUS.get("reclassify"),
     }
 
 
@@ -244,13 +279,15 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
     total, rows = list_topics(args, page, size, order)
     items = [{"t": t, "sources": topic_sources(t["id"])} for t in rows]
     tl = timeline(args)
-    max_v = max([max(x["pos"], x["neg"]) for x in tl] + [1])
+    # Skala für das gestapelte Diagramm: neutral liegt mittig auf der Nulllinie
+    max_v = max([max(x["pos"] + x["neu"] / 2, x["neg"] + x["neu"] / 2) for x in tl] + [1])
     domains = db.query("SELECT source_domain d, MIN(source_name) n, COUNT(*) c FROM articles "
                        "WHERE relevant=1 GROUP BY source_domain ORDER BY n")
     base_q = {k: v for k, v in args.items() if v}
     return templates.TemplateResponse(request, "index.html", {
         "items": items, "total": total, "page": page, "pages": max(1, -(-total // size)), "args": args,
         "order": order, "timeline": tl, "max_v": max_v, "domains": domains, "status": status_info(),
+        "stats": stats(args), "period_since": pipeline.period()[0].isoformat(),
         "qs": lambda **kw: "?" + urlencode({**base_q, "order": order, **kw}),
     })
 
@@ -261,8 +298,54 @@ def topic_page(request: Request, topic_id: int, _=Depends(maybe_public)):
     if t is None:
         raise HTTPException(404, "Thema nicht gefunden")
     arts = db.query("SELECT * FROM articles WHERE topic_id=? ORDER BY published_at", (topic_id,))
-    return templates.TemplateResponse(request, "topic.html", {"t": t, "articles": arts,
-                                                              "sources": topic_sources(topic_id)})
+    return templates.TemplateResponse(request, "topic.html", {
+        "t": t, "articles": arts, "sources": topic_sources(topic_id),
+        "detail": _json(t["sentiment_detail"]),
+        "art_labels": {a["id"]: sentiment.label_for(_result(_json(a["sentiment_detail"]))) for a in arts},
+    })
+
+
+def _json(raw) -> dict:
+    try:
+        return json.loads(raw or "{}")
+    except ValueError:
+        return {}
+
+
+def _result(d: dict) -> sentiment.Result:
+    return sentiment.Result(float(d.get("pos", 0)), float(d.get("neg", 0)), d.get("hits", []))
+
+
+@app.get("/doku", response_class=HTMLResponse)
+def doku(request: Request, _=Depends(maybe_public)):
+    sample = {"title": "Volkswagen: Absatz in China sinkt im dritten Quartal deutlich",
+              "summary": "Der Konzern lieferte in China 15 Prozent weniger Fahrzeuge aus als im Vorjahr.",
+              "source": "DER SPIEGEL", "published": "2026-10-09T08:15:00+00:00"}
+    cands = [{"id": 4711, "title": "VW senkt Prognose wegen schwacher Nachfrage in China",
+              "abstract": "Volkswagen hat seine Jahresprognose gesenkt.", "first": "2026-10-07T10:00:00+00:00",
+              "last": "2026-10-08T16:00:00+00:00"}]
+    since, until = pipeline.period()
+    settings_rows = [{"s": s, "envs": ["NNIGN_" + s.key.upper(), *s.env],
+                      "default": ("\n".join(s.default) if isinstance(s.default, list) else s.default)}
+                     for s in config.SETTINGS]
+    return templates.TemplateResponse(request, "doku.html", {
+        "rules": sentiment.RULES, "pair_weight": sentiment.PAIR_WEIGHT,
+        "metrics_good": sentiment.GOOD_METRICS.replace("|", ", "),
+        "metrics_bad": sentiment.BAD_METRICS.replace("|", ", "),
+        "up": sentiment.UP.replace("|", ", "), "down": sentiment.DOWN.replace("|", ", "),
+        "margin": config.get("sentiment_neutral_margin"), "mixed": config.get("sentiment_mixed_ratio"),
+        "extra_terms": config.get("lexicon_extra"),
+        "system_prompt": llm.system_prompt(), "instructions": llm.instructions(),
+        "prompt_custom": bool((config.get("llm_system_prompt") or "").strip() or
+                              (config.get("llm_instructions") or "").strip()),
+        "example_user": llm.build_user_message(sample, cands),
+        "schema": json.dumps(llm.SCHEMA, ensure_ascii=False, indent=2),
+        "format_hint": llm.FORMAT_HINT.strip(), "llm_status": llm.describe(),
+        "providers": llm.PROVIDERS, "provider": llm.provider_name(), "model": llm.model(),
+        "settings_rows": settings_rows, "cfg": config.get, "sources": sources.all_sources(),
+        "since": since.isoformat(), "until": until.isoformat() if until else "",
+        "default_days": pipeline.DEFAULT_PERIOD_DAYS, "breaker": pipeline.BREAKER_LIMIT,
+    })
 
 
 @app.get("/healthz")
@@ -277,6 +360,7 @@ def topic_json(t) -> dict:
     return {
         "id": t["id"], "datum": t["created_at"], "kurzthema": t["title"], "abstract": t["abstract"],
         "bewertung": t["sentiment"], "score": t["sentiment_score"], "bewertung_quelle": t["sentiment_origin"],
+        "bewertung_begruendung": _json(t["sentiment_detail"]),
         "erstes_datum": t["first_published_at"], "letztes_datum": t["last_published_at"],
         "anzahl_meldungen": t["article_count"],
         "quellen": [{"medium": a["source_name"], "titel": a["title"], "url": a["url"], "datum": a["published_at"]}
@@ -301,6 +385,11 @@ def api_topic(topic_id: int, _=Depends(maybe_public)):
                                                   "FROM articles WHERE topic_id=? ORDER BY published_at",
                                                   (topic_id,))]
     return out
+
+
+@app.get("/api/stats")
+def api_stats(request: Request, _=Depends(maybe_public)):
+    return stats(_args(request))
 
 
 @app.get("/api/timeline")
@@ -331,6 +420,10 @@ def export_csv(request: Request, _=Depends(maybe_public)):
 
 # ====================================================================== Admin
 
+TEXT_DEFAULTS = {"llm_system_prompt": prompts.DEFAULT_SYSTEM_PROMPT,
+                 "llm_instructions": prompts.DEFAULT_INSTRUCTIONS}
+
+
 def back(msg: str = "", anchor: str = "") -> RedirectResponse:
     url = "/admin" + (("?" + urlencode({"msg": msg})) if msg else "") + (f"#{anchor}" if anchor else "")
     return RedirectResponse(url, status_code=303)
@@ -340,7 +433,7 @@ def back(msg: str = "", anchor: str = "") -> RedirectResponse:
 def admin(request: Request, msg: str = "", _=Depends(require_admin)):
     groups: dict[str, list] = {}
     for s in config.SETTINGS:
-        val = config.get(s.key)
+        val = config.get(s.key) or TEXT_DEFAULTS.get(s.key, "")
         if s.type == "list":
             val = "\n".join(val)
         if s.type == "secret":
@@ -350,9 +443,15 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
                     "new_topics, llm_calls FROM runs ORDER BY id DESC LIMIT 25")
     failed = db.query("SELECT t.*, s.name FROM backfill_tasks t LEFT JOIN sources s ON s.id=t.source_id "
                       "WHERE t.status IN ('fehler','übersprungen') ORDER BY t.done_at DESC LIMIT 30")
+    since, until = pipeline.period()
+    span = db.query_one("SELECT MIN(published_at) a, MAX(published_at) b, COUNT(*) n FROM articles WHERE relevant=1")
     return templates.TemplateResponse(request, "admin.html", {
         "groups": groups, "sources": sources.all_sources(), "runs": runs, "msg": msg,
         "status": status_info(), "failed": failed,
+        "period": {"since": since.isoformat(), "until": until.isoformat() if until else "",
+                   "origin": config.source_of("collect_since"), "data_from": span["a"], "data_to": span["b"],
+                   "data_n": span["n"]},
+        "backfill_enabled": config.get("backfill_enabled"),
     })
 
 
@@ -360,14 +459,22 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
 async def admin_settings(request: Request, _=Depends(require_admin)):
     form = await request.form()
     changed = 0
+    bools_in_form = set(form.getlist("__bools"))  # nur Checkboxen, die das Formular wirklich enthält
     for s in config.SETTINGS:
         if s.type == "bool":
+            if s.key not in bools_in_form:
+                continue
             new = form.get(s.key) == "on"
         elif s.key in form:
             new = form.get(s.key)
             if s.type == "secret" and (not new or str(new).startswith("•")):
                 continue
         else:
+            continue
+        if s.key in TEXT_DEFAULTS and str(new).strip().replace("\r\n", "\n") == TEXT_DEFAULTS[s.key].strip():
+            if config.source_of(s.key) == "admin":
+                config.reset(s.key)   # unveränderter Standardtext wird nicht gespeichert
+                changed += 1
             continue
         try:
             parsed = config.parse_value(s, new)
@@ -449,6 +556,68 @@ def admin_backfill_reset(all: str = Form(""), _=Depends(require_admin)):  # noqa
     return back(f"{n} Aufgaben wieder auf „offen“ gesetzt", "backfill")
 
 
+def _date_or_none(raw: str):
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, f"Ungültiges Datum: {raw}")
+
+
+@app.post("/admin/data/period")
+def admin_period(since: str = Form(...), until: str = Form(""), purge: str = Form(""), _=Depends(require_admin)):
+    d_since, d_until = _date_or_none(since), _date_or_none(until)
+    if d_since is None:
+        return back("Bitte ein Startdatum angeben", "daten")
+    if d_until and d_until < d_since:
+        return back("Das Enddatum liegt vor dem Startdatum", "daten")
+    r = pipeline.apply_period(d_since, d_until, purge == "on")
+    msg = (f"Erfassungszeitraum gesetzt: {d_since:%d.%m.%Y} bis {f'{d_until:%d.%m.%Y}' if d_until else 'laufend'}. "
+           f"{r['planned']} Abrufaufgaben neu eingeplant, {r['revived']} reaktiviert, {r['stopped']} gestoppt")
+    if purge == "on":
+        msg += f"; {r['articles']} Meldungen und {r['topics']} Themen außerhalb gelöscht"
+    return back(msg + ".", "daten")
+
+
+@app.post("/admin/data/delete-range")
+def admin_delete_range(d_from: str = Form(""), d_to: str = Form(""), confirm: str = Form(""),
+                       _=Depends(require_admin)):
+    a, b = _date_or_none(d_from), _date_or_none(d_to)
+    if not (a or b):
+        return back("Bitte mindestens ein Datum angeben", "daten")
+    if confirm != "on":
+        return back("Bitte das Löschen bestätigen (Häkchen)", "daten")
+    r = pipeline.delete_range(a, b)
+    return back(f"{r['articles']} Meldungen gelöscht, {r['topics']} Themen entfallen.", "daten")
+
+
+@app.post("/admin/data/wipe")
+def admin_wipe(word: str = Form(""), factory: str = Form(""), _=Depends(require_admin)):
+    if word.strip().upper() != "LÖSCHEN":
+        return back("Zur Sicherheit bitte LÖSCHEN eintippen", "daten")
+    threading.Thread(target=pipeline.wipe, kwargs={"factory": factory == "on"}, daemon=True).start()
+    return back("Alle Daten werden gelöscht; anschließend startet automatisch ein neuer Initial-Scan"
+                + (" mit Werkseinstellungen." if factory == "on" else "."), "daten")
+
+
+@app.post("/admin/backfill/toggle")
+def admin_backfill_toggle(_=Depends(require_admin)):
+    new = not config.get("backfill_enabled")
+    config.set("backfill_enabled", new)
+    return back("Backfill " + ("fortgesetzt" if new else "angehalten"), "daten")
+
+
+@app.post("/admin/reclassify")
+def admin_reclassify(_=Depends(require_admin)):
+    if pipeline.STATUS.get("reclassify"):
+        return back("Neu-Bewertung läuft bereits")
+    threading.Thread(target=pipeline.reclassify, name="reclassify", daemon=True).start()
+    return back("Bewertungen werden neu berechnet (Regeln; KI- und manuell bewertete Themen bleiben). "
+                "Dauer: Sekunden bis wenige Minuten.")
+
+
 @app.post("/admin/llm-test")
 def admin_llm_test(_=Depends(require_admin)):
     return back("KI-Test: " + llm.test_connection(), "einstellungen")
@@ -473,7 +642,7 @@ def admin_run(request: Request, run_id: int, _=Depends(require_admin)):
 @app.post("/admin/topic/{topic_id}")
 def admin_topic_edit(topic_id: int, title: str = Form(...), abstract: str = Form(""),
                      sentiment: str = Form(...), hidden: str = Form(""), _=Depends(require_admin)):
-    if sentiment not in ("positiv", "negativ"):
+    if sentiment not in ("positiv", "neutral", "negativ"):
         raise HTTPException(400)
     with db.tx() as conn:
         conn.execute("UPDATE topics SET title=?, abstract=?, sentiment=?, sentiment_origin='manuell', locked=1, "

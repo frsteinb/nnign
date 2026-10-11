@@ -1,30 +1,50 @@
 {% extends "base.html" %}
 {% block content %}
 {% set st = status %}
-<section class="stats">
-  <div class="tile"><div class="num">{{ st.topics }}</div><div class="lbl">Themen</div></div>
-  <div class="tile"><div class="num"><span class="dot pos"></span>{{ st.positive }}</div><div class="lbl">positiv</div></div>
-  <div class="tile"><div class="num"><span class="dot neg"></span>{{ st.negative }}</div><div class="lbl">negativ</div></div>
-  <div class="tile"><div class="num">{{ st.articles }}</div><div class="lbl">Meldungen</div></div>
-  <div class="tile wide">
-    <div class="lbl">
+{% set sx = stats %}
+<section class="card statbox" aria-label="Statistik zum Datenbestand">
+  <div class="card-head">
+    <h2>Datenbestand{% if sx.filtered %} <span class="muted small">(aktuelle Auswahl)</span>{% endif %}</h2>
+    <div class="statusline muted small">
       {% if st.scan_running %}<span class="pulse"></span> Scan läuft: {{ st.scan_running.phase }}
       {% elif not st.initial_done and st.last_run and st.last_run.status == 'fehler' %}<span class="warn">Initial-Scan fehlgeschlagen – keine Quelle erreichbar. Neuer Versuch alle 10 Minuten; Details im Admin-Bereich.</span>
       {% elif not st.initial_done %}<span class="pulse"></span> Initial-Scan wird vorbereitet …
-      {% else %}Letzter Scan: {{ st.last_run.started_at|dt if st.last_run else '–' }} · nächster: {{ st.next_scan_at|dt }}{% endif %}
+      {% else %}Letzter Scan {{ st.last_run.started_at|dt if st.last_run else '–' }} · nächster {{ st.next_scan_at|dt }}{% endif %}
+      {% if st.backfill.total and st.backfill.percent < 100 %} · Historie {{ st.backfill.percent }} % abgerufen{% endif %}
     </div>
-    {% if st.backfill.total %}
-    <div class="lbl">Historischer Backfill: {{ st.backfill.percent }} % ({{ st.backfill.done }} / {{ st.backfill.total }} Aufgaben)
-      {% if st.backfill.percent < 100 %} – Historie noch unvollständig{% endif %}</div>
-    <div class="bar"><div style="width: {{ st.backfill.percent }}%"></div></div>
-    {% endif %}
   </div>
+  <div class="kpis">
+    <div><span class="num">{{ sx.topics }}</span><span class="lbl">Themen</span></div>
+    <div><span class="num">{{ sx.articles }}</span><span class="lbl">Meldungen</span></div>
+    <div><span class="num">{{ sx.media_count }}</span><span class="lbl">Medien</span></div>
+    <div><span class="num">{{ sx.per_topic }}</span><span class="lbl">Meldungen je Thema</span></div>
+    <div class="span2"><span class="num range">{{ sx.first|d if sx.first else '–' }} – {{ sx.last|d if sx.last else '–' }}</span>
+      <span class="lbl">Zeitraum der Themen · Erfassung ab {{ period_since|d }}</span></div>
+  </div>
+  {% if sx.topics %}
+  <div class="share" role="img" aria-label="{{ sx.pos_pct }} % positiv, {{ sx.neu_pct }} % neutral, {{ sx.neg_pct }} % negativ">
+    {% if sx.pos %}<span class="seg pos" style="flex: {{ sx.pos }}" title="{{ sx.pos }} positiv"></span>{% endif %}
+    {% if sx.neu %}<span class="seg neu" style="flex: {{ sx.neu }}" title="{{ sx.neu }} neutral"></span>{% endif %}
+    {% if sx.neg %}<span class="seg neg" style="flex: {{ sx.neg }}" title="{{ sx.neg }} negativ"></span>{% endif %}
+  </div>
+  <div class="share-legend small">
+    <a href="{{ qs(sentiment='positiv') }}"><span class="dot pos"></span>{{ sx.pos_pct }} % positiv ({{ sx.pos }})</a>
+    <a href="{{ qs(sentiment='neutral') }}"><span class="dot neu"></span>{{ sx.neu_pct }} % neutral ({{ sx.neu }})</a>
+    <a href="{{ qs(sentiment='negativ') }}"><span class="dot neg"></span>{{ sx.neg_pct }} % negativ ({{ sx.neg }})</a>
+  </div>
+  <div class="facts-inline small muted">
+    <span>Top-Medien: {% for m in sx.top_media %}{{ m.name }} {{ m.c }}{{ ', ' if not loop.last }}{% endfor %}</span>
+    <span>Bewertet durch: {% for k, v in sx.origin.items() if v %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</span>
+    <span>{{ sx.multi_pct }} % der Themen mit mehreren Meldungen</span>
+    <a href="/doku#statistik">Was bedeuten die Zahlen?</a>
+  </div>
+  {% endif %}
 </section>
 
 <section class="card">
   <div class="card-head">
     <h2>{% if args.year %}Themen {{ args.year }} nach Monat{% else %}Entwicklung seit {{ timeline[0].key if timeline else '' }}{% endif %}</h2>
-    <div class="legend"><span><span class="dot pos"></span>positiv (nach oben)</span><span><span class="dot neg"></span>negativ (nach unten)</span>
+    <div class="legend"><span><span class="dot pos"></span>positiv (oben)</span><span><span class="dot neu"></span>neutral (Mitte)</span><span><span class="dot neg"></span>negativ (unten)</span>
       {% if args.year %}<a href="{{ qs(year='') }}">alle Jahre</a>{% endif %}</div>
   </div>
   {% set n = timeline|length %}
@@ -32,21 +52,22 @@
   {% set step = ((w - pad) / (n if n else 1)) %}
   {% set bw = [[step - 2, 2]|max, 44]|min %}{% set off = (step - 2 - bw) / 2 %}
   <div class="chart-wrap">
-  <svg class="chart" viewBox="0 0 {{ w }} {{ h + 18 }}" role="img" aria-label="Positive und negative Themen je Zeitraum">
+  <svg class="chart" viewBox="0 0 {{ w }} {{ h + 18 }}" role="img" aria-label="Positive, neutrale und negative Themen je Zeitraum">
     <line class="axis" x1="{{ pad }}" x2="{{ w }}" y1="{{ mid }}" y2="{{ mid }}"/>
-    <text class="tick" x="{{ pad - 4 }}" y="14" text-anchor="end">{{ max_v }}</text>
+    <text class="tick" x="{{ pad - 4 }}" y="14" text-anchor="end">{{ '%g'|format(max_v) }}</text>
     <text class="tick" x="{{ pad - 4 }}" y="{{ mid + 4 }}" text-anchor="end">0</text>
-    <text class="tick" x="{{ pad - 4 }}" y="{{ h - 4 }}" text-anchor="end">{{ max_v }}</text>
+    <text class="tick" x="{{ pad - 4 }}" y="{{ h - 4 }}" text-anchor="end">{{ '%g'|format(max_v) }}</text>
     {% for p in timeline %}
       {% set x = pad + loop.index0 * step + 1 + off %}
-      {% set hp = (p.pos / max_v) * (mid - 10) %}
-      {% set hn = (p.neg / max_v) * (mid - 10) %}
+      {% set scale = (mid - 10) / max_v %}
+      {% set hz = p.neu * scale %}{% set hp = p.pos * scale %}{% set hn = p.neg * scale %}
       {% set label = p.key[5:] if args.year else p.key %}
       <a href="{{ qs(year=p.key[:4]) if not args.year else qs(date_from=p.key ~ '-01', date_to=p.key ~ '-31', year=args.year) }}">
-      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neg }} negativ">
+      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ">
         <rect class="hit" x="{{ x - 1 - off }}" y="0" width="{{ step }}" height="{{ h }}"/>
-        {% if p.pos %}<rect class="pos" x="{{ x }}" y="{{ mid - 1 - hp }}" width="{{ bw }}" height="{{ hp }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
-        {% if p.neg %}<rect class="neg" x="{{ x }}" y="{{ mid + 1 }}" width="{{ bw }}" height="{{ hn }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
+        {% if p.neu %}<rect class="neu" x="{{ x }}" y="{{ mid - hz/2 }}" width="{{ bw }}" height="{{ [hz, 1]|max }}"/>{% endif %}
+        {% if p.pos %}<rect class="pos" x="{{ x }}" y="{{ mid - hz/2 - 1 - hp }}" width="{{ bw }}" height="{{ hp }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
+        {% if p.neg %}<rect class="neg" x="{{ x }}" y="{{ mid + hz/2 + 1 }}" width="{{ bw }}" height="{{ hn }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
       </g></a>
       {% if args.year or loop.index0 % ((n // 13) + 1) == 0 or loop.last %}
       <text class="tick" x="{{ x + bw/2 }}" y="{{ h + 14 }}" text-anchor="middle">{{ label }}</text>
@@ -56,8 +77,8 @@
   <div class="tooltip" hidden></div>
   </div>
   <details class="table-view"><summary>Als Tabelle</summary>
-    <table><thead><tr><th>Zeitraum</th><th>positiv</th><th>negativ</th></tr></thead><tbody>
-    {% for p in timeline %}<tr><td>{{ p.key }}</td><td>{{ p.pos }}</td><td>{{ p.neg }}</td></tr>{% endfor %}
+    <table><thead><tr><th>Zeitraum</th><th>positiv</th><th>neutral</th><th>negativ</th></tr></thead><tbody>
+    {% for p in timeline %}<tr><td>{{ p.key }}</td><td>{{ p.pos }}</td><td>{{ p.neu }}</td><td>{{ p.neg }}</td></tr>{% endfor %}
     </tbody></table>
   </details>
 </section>
@@ -67,6 +88,7 @@
   <select name="sentiment" aria-label="Bewertung">
     <option value="">alle Bewertungen</option>
     <option value="positiv" {{ 'selected' if args.sentiment == 'positiv' }}>positiv</option>
+    <option value="neutral" {{ 'selected' if args.sentiment == 'neutral' }}>neutral</option>
     <option value="negativ" {{ 'selected' if args.sentiment == 'negativ' }}>negativ</option>
   </select>
   <select name="source" aria-label="Medium">
@@ -103,7 +125,7 @@
 {% for it in items %}{% set t = it.t %}
   <li class="topic {{ t.sentiment }}">
     <div class="meta">
-      <span class="badge {{ t.sentiment }}">{{ '▲' if t.sentiment == 'positiv' else '▼' }} {{ t.sentiment }}</span>
+      <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
       <span title="Erstes Erscheinen">erstmals {{ t.first_published_at|d }}</span>
       {% if t.article_count > 1 %}<span>· {{ t.article_count }} Meldungen bis {{ t.last_published_at|d }}</span>{% endif %}
       <span class="muted">· erfasst {{ t.created_at|d }}</span>

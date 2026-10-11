@@ -16,7 +16,7 @@ from . import db
 @dataclass
 class Setting:
     key: str
-    type: str  # int | float | bool | str | list | secret | choice
+    type: str  # int | float | bool | str | text | list | secret | choice
     default: Any
     label: str
     help: str = ""
@@ -76,16 +76,19 @@ SETTINGS: list[Setting] = [
     # --- Zeitplan
     Setting("scan_interval_hours", "float", 4.0, "Scan-Intervall (Stunden)",
             "Abstand zwischen zwei regulären Scans der aktuellen Feeds.", "Zeitplan"),
-    Setting("initial_recent_days", "int", 60, "Initial-Scan: aktuelle Suche (Tage)",
-            "Beim ersten Start werden die letzten N Tage über die Nachrichtensuche in Wochenfenstern abgefragt.", "Zeitplan"),
+    Setting("initial_recent_days", "int", 60, "Initial-Scan: Suchfenster (Tage)",
+            "Der Initial-Scan fragt die Nachrichtensuche für die letzten N Tage (höchstens bis zum Beginn des "
+            "Erfassungszeitraums) in Wochenfenstern ab; ältere Zeiträume übernimmt der Backfill.", "Zeitplan"),
     Setting("regular_lookback_days", "int", 3, "Regulärer Scan: max. Alter (Tage)",
             "Ältere Artikel aus Feeds werden bei regulären Scans ignoriert (der Archiv-Backfill ist davon unabhängig).", "Zeitplan"),
     # --- Historischer Backfill
     Setting("backfill_enabled", "bool", True, "Historischer Backfill aktiv",
             "Arbeitet im Hintergrund Archivseiten, archivierte Feeds und Suchzeitfenster ab.", "Archiv / Backfill"),
-    Setting("backfill_since", "str", "2000-01-01", "Backfill ab Datum (JJJJ-MM-TT)",
-            "Wie weit zurück historisch gesucht wird.", "Archiv / Backfill"),
-    Setting("backfill_until", "str", "", "Backfill bis Datum (leer = heute)", "", "Archiv / Backfill"),
+    Setting("collect_since", "str", "", "Erfassung ab (JJJJ-MM-TT)",
+            "Beginn des Erfassungszeitraums. Leer = Standard vom Erststart (vier Wochen vor dem ersten Start). "
+            "Ändern am besten über Admin → Daten & Zeitraum.", "Erfassungszeitraum"),
+    Setting("collect_until", "str", "", "Erfassung bis (JJJJ-MM-TT, leer = laufend)",
+            "Ende des Erfassungszeitraums; leer = bis heute und laufend weiter.", "Erfassungszeitraum"),
     Setting("backfill_wayback", "bool", True, "Internet Archive (Wayback) für Feeds nutzen",
             "Holt archivierte Schnappschüsse der RSS-Feeds aus dem Internet Archive.", "Archiv / Backfill"),
     Setting("backfill_wayback_granularity", "choice", "month", "Wayback-Schnappschüsse pro",
@@ -132,8 +135,17 @@ SETTINGS: list[Setting] = [
     Setting("cluster_window_days", "int", 6, "Themen-Zeitfenster (Tage)",
             "Ein Artikel kann nur Themen zugeordnet werden, deren letzte Meldung höchstens so lange zurückliegt.", "Themen"),
     Setting("max_sources_per_topic", "int", 5, "Max. angezeigte Quellen je Thema", "", "Themen"),
-    Setting("sentiment_tie", "choice", "negativ", "Bewertung bei Gleichstand",
-            "Wenn das Lexikon keine Tendenz erkennt.", "Themen", ["negativ", "positiv"]),
+    # --- Bewertung
+    Setting("sentiment_neutral_margin", "float", 1.5, "Neutral-Marge",
+            "Ist der Saldo aus positiven und negativen Signalen kleiner als dieser Wert, gilt die Meldung als "
+            "neutral. Höher = mehr neutrale Bewertungen.", "Bewertung"),
+    Setting("sentiment_mixed_ratio", "float", 0.75, "Gemischt-Schwelle",
+            "Erreicht die schwächere Seite mindestens diesen Anteil der stärkeren (0..1), gilt die Meldung "
+            "als gemischt und damit neutral.", "Bewertung"),
+    Setting("lexicon_extra", "list", [], "Eigene Bewertungsbegriffe",
+            "Ein Begriff je Zeile im Format „begriff = gewicht“, z. B. „sondermodell = 1.5“ oder "
+            "„lieferstopp = -3“. Der Begriff zählt als Wortanfang; positives Gewicht = positiv. "
+            "Danach „Bewertungen neu berechnen“.", "Bewertung"),
     # --- KI
     Setting("llm_enabled", "bool", True, "KI-Analyse verwenden",
             "Nur aktiv, wenn Anbieter, Modell und ggf. API-Key gesetzt sind. Sonst arbeitet das System "
@@ -161,6 +173,12 @@ SETTINGS: list[Setting] = [
     Setting("anthropic_api_key", "secret", "", "Anthropic API-Key (alt)",
             "Wird verwendet, wenn beim Anbieter anthropic kein allgemeiner API-Key gesetzt ist. "
             "Alternativ Umgebungsvariable ANTHROPIC_API_KEY.", "KI", env=["ANTHROPIC_API_KEY"]),
+    Setting("llm_system_prompt", "text", "", "System-Prompt",
+            "Rolle und Grundregeln für das Modell. Leer = Standard (siehe Dokumentation). "
+            "„auf Standard“ stellt den mitgelieferten Text wieder her.", "KI"),
+    Setting("llm_instructions", "text", "", "Arbeitsanweisung (Prompt)",
+            "Aufgaben und Bewertungskriterien. Leer = Standard. Die Daten der Meldung (Titel, Teaser, Quelle, "
+            "Datum, Kandidaten-Themen) werden automatisch angehängt; das Antwortformat ist fest vorgegeben.", "KI"),
     Setting("llm_effort", "choice", "low", "Denkaufwand (effort, nur Anthropic)", "", "KI",
             ["low", "medium", "high"]),
     Setting("llm_for_backfill", "bool", False, "KI auch für historischen Backfill",

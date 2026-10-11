@@ -6,7 +6,7 @@ import math
 from collections import Counter
 from datetime import datetime, timedelta
 
-from . import config, db, sentiment
+from . import db, sentiment
 from .textutil import shorten, tokens
 
 SIG_SIZE = 60
@@ -90,14 +90,27 @@ def best_matches(conn, vec: Counter, published: datetime, idf: Idf, window_days:
 
 
 def create_topic(conn, title: str, abstract: str, senti: str, score: float, origin: str,
-                 published: str, vec: Counter) -> int:
+                 published: str, vec: Counter, detail: dict | None = None) -> int:
     now = db.utcnow()
     cur = conn.execute(
-        "INSERT INTO topics(title, abstract, sentiment, sentiment_score, sentiment_origin, first_published_at, "
-        "last_published_at, signature, created_at, updated_at, article_count) VALUES(?,?,?,?,?,?,?,?,?,?,0)",
-        (title, abstract, senti, score, origin, published, published, json.dumps(dict(vec.most_common(SIG_SIZE))),
-         now, now))
+        "INSERT INTO topics(title, abstract, sentiment, sentiment_score, sentiment_origin, sentiment_detail, "
+        "first_published_at, last_published_at, signature, created_at, updated_at, article_count) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,0)",
+        (title, abstract, senti, score, origin, json.dumps(detail or {}, ensure_ascii=False), published, published,
+         json.dumps(dict(vec.most_common(SIG_SIZE))), now, now))
     return cur.lastrowid
+
+
+def aggregate_sentiment(details: list[dict]) -> tuple[str, float, dict]:
+    """Tonalität eines Themas aus den Regeltreffern seiner Meldungen."""
+    res = sentiment.Result()
+    for d in details:
+        res.pos += float(d.get("pos", 0))
+        res.neg += float(d.get("neg", 0))
+        res.hits += d.get("hits", [])
+    detail = res.detail(10)
+    detail["articles"] = len(details)
+    return sentiment.label_for(res), res.score, detail
 
 
 def attach(conn, topic_id: int, vec: Counter, published: str) -> None:
@@ -111,7 +124,7 @@ def refresh(conn, topic_id: int) -> None:
     t = conn.execute("SELECT * FROM topics WHERE id=?", (topic_id,)).fetchone()
     if t is None:
         return
-    arts = conn.execute("SELECT title, summary, published_at, sentiment_score FROM articles "
+    arts = conn.execute("SELECT title, summary, published_at, sentiment_score, sentiment_detail FROM articles "
                         "WHERE topic_id=? ORDER BY published_at", (topic_id,)).fetchall()
     if not arts:
         conn.execute("DELETE FROM topics WHERE id=?", (topic_id,))
@@ -122,9 +135,10 @@ def refresh(conn, topic_id: int) -> None:
         "last_published_at": arts[-1]["published_at"],
     }
     if not t["locked"] and t["sentiment_origin"] == "lexikon":
-        total = sum(a["sentiment_score"] for a in arts)
-        fields["sentiment_score"] = round(total / len(arts), 2)
-        fields["sentiment"] = sentiment.label(total, config.get("sentiment_tie"))
+        label, score, detail = aggregate_sentiment([json.loads(a["sentiment_detail"] or "{}") for a in arts])
+        fields["sentiment"] = label
+        fields["sentiment_score"] = score
+        fields["sentiment_detail"] = json.dumps(detail, ensure_ascii=False)
         fields["title"] = arts[0]["title"]
         with_summary = [a for a in arts if len(a["summary"] or "") >= 60]
         if with_summary:
@@ -156,9 +170,9 @@ def detach_article(article_id: int) -> int | None:
             return None
         old = a["topic_id"]
         vec = article_vector(a["title"], a["summary"])
-        new_id = create_topic(conn, a["title"], shorten(a["summary"] or ""),
-                              sentiment.label(a["sentiment_score"], config.get("sentiment_tie")),
-                              a["sentiment_score"], "lexikon", a["published_at"], vec)
+        label, score, detail = aggregate_sentiment([json.loads(a["sentiment_detail"] or "{}")])
+        new_id = create_topic(conn, a["title"], shorten(a["summary"] or ""), label, score, "lexikon",
+                              a["published_at"], vec, detail)
         conn.execute("UPDATE articles SET topic_id=? WHERE id=?", (new_id, article_id))
         refresh(conn, new_id)
         if old:

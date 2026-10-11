@@ -2,15 +2,22 @@
 
 Nachrichtenmonitor für den VW-Konzern.
 
-Durchsucht seriöse deutschsprachige Nachrichtenquellen nach Meldungen über den Volkswagen-Konzern,
-fasst sie zu **Nachrichtenthemen** zusammen, bewertet jedes Thema als **positiv** oder **negativ** und
-stellt alles über einen Webserver auf **Port 8000** bereit.
+> **Hobbyprojekt:** privat, nicht kommerziell, ohne Verbindung zur Volkswagen AG. Die Bewertungen beruhen auf
+> offengelegten persönlichen Annahmen (siehe In-App-Dokumentation unter `/doku`) und sind keine Beratung –
+> bitte eigene Überlegungen anstellen.
 
-* **Beim ersten Start:** umfassender Initial-Scan (aktuelle Feeds + Nachrichtensuche der letzten 60 Tage),
-  danach ein **historischer Backfill bis zum Jahr 2000**, der im Hintergrund läuft.
+Durchsucht seriöse deutschsprachige Nachrichtenquellen nach Meldungen über den Volkswagen-Konzern,
+fasst sie zu **Nachrichtenthemen** zusammen, bewertet jedes Thema als **positiv**, **neutral** oder **negativ**
+(mit nachvollziehbarer Begründung) und stellt alles über einen Webserver auf **Port 8000** bereit.
+
+* **Beim ersten Start:** Initial-Scan für den Erfassungszeitraum – standardmäßig **die letzten vier Wochen**.
+  Der Admin kann den Zeitraum jederzeit erweitern (z. B. zurück bis 2000); die Historie wird dann im Hintergrund abgerufen.
 * **Danach:** alle **4 Stunden** (einstellbar) ein Scan auf *neue* Meldungen.
 * Pro Thema gespeichert: Erfassungsdatum, Kurzthema, Abstract, Bewertung, 1–5 Quellen (Links), erstes Datum.
-* Alles ist im Admin-Bereich unter `/admin` konfigurierbar.
+* Kompakte Statistik zum ausgewählten Datenbestand auf der Startseite, ausführliche Dokumentation unter `/doku`
+  (inkl. Bewertungskriterien, Annahmen und dem vollständigen KI-Prompt).
+* Alles ist im Admin-Bereich unter `/admin` konfigurierbar – auch Erfassungszeitraum, Aktualisierung, Löschen
+  und Neu-Initialisierung sowie der KI-Prompt.
 
 ## Schnellstart
 
@@ -58,10 +65,11 @@ LLM_PROVIDER=ollama LLM_MODEL=llama3.1 docker compose up -d --build
 
 | Pfad | Inhalt |
 |---|---|
-| `/` | Themenliste mit Filtern (Suche, Bewertung, Medium, Zeitraum) und Zeitstrahl positiv/negativ seit 2000; Klick auf ein Jahr zeigt die Monate |
+| `/` | Themenliste mit Filtern (Suche, Bewertung, Medium, Zeitraum) und Zeitstrahl positiv/neutral/negativ über den Erfassungszeitraum; Klick auf ein Jahr zeigt die Monate |
 | `/thema/{id}` | Thema mit allen Meldungen; Bearbeiten, Zusammenführen, Abtrennen, Löschen (Admin) |
-| `/admin` | Status, Backfill-Fortschritt je Quelle, Einstellungen, Quellenverwaltung, Scan-Protokolle |
-| `/api/topics`, `/api/topics/{id}`, `/api/timeline`, `/api/status` | JSON-API (gleiche Filterparameter wie `/`) |
+| `/doku` | Dokumentation: Ablauf, Quellen, Bewertungskriterien und Annahmen, KI-Anfrage und Prompt, Statistik, Einstellungen |
+| `/admin` | Status, Daten & Erfassungszeitraum (ändern, aktualisieren, löschen, neu initialisieren), Einstellungen, Quellen, Protokolle |
+| `/api/topics`, `/api/topics/{id}`, `/api/stats`, `/api/timeline`, `/api/status` | JSON-API (gleiche Filterparameter wie `/`) |
 | `/export.csv` | CSV-Export (Semikolon, UTF-8, Excel-tauglich) |
 | `/docs` | automatisch erzeugte API-Dokumentation |
 | `/healthz` | Health-Check |
@@ -69,13 +77,15 @@ LLM_PROVIDER=ollama LLM_MODEL=llama3.1 docker compose up -d --build
 ## Konfiguration
 
 Jede Einstellung hat einen eingebauten Standardwert, kann per Umgebungsvariable `NNIGN_<NAME>`
-vorbelegt werden (z. B. `NNIGN_SCAN_INTERVAL_HOURS=2`, `NNIGN_BACKFILL_SINCE=2005-01-01`) und im
+vorbelegt werden (z. B. `NNIGN_SCAN_INTERVAL_HOURS=2`, `NNIGN_COLLECT_SINCE=2005-01-01`) und im
 Admin-Bereich überschrieben werden (der Admin-Wert hat Vorrang). Die wichtigsten:
 
 | Einstellung | Standard | Bedeutung |
 |---|---|---|
 | `scan_interval_hours` | 4 | Intervall der regulären Scans |
-| `backfill_since` | 2000-01-01 | Wie weit der historische Backfill zurückgeht |
+| `collect_since` / `collect_until` | vier Wochen vor dem Erststart / laufend | Erfassungszeitraum (bequemer: Admin → Daten & Erfassungszeitraum) |
+| `sentiment_neutral_margin` / `lexicon_extra` | 1,5 / – | Wann „neutral“ vergeben wird; eigene Bewertungsbegriffe |
+| `llm_system_prompt` / `llm_instructions` | mitgeliefert | KI-Prompt, im Admin-Bereich editierbar |
 | `search_enabled` | an | Nachrichtensuche (Google News RSS mit `site:`) zusätzlich zu den Feeds |
 | `keywords_strong` / `keywords_brands` / `keywords_exclude` | siehe UI | Relevanzregeln (reguläre Ausdrücke) |
 | `cluster_threshold` / `cluster_window_days` | 0,34 / 6 | Wann Meldungen zum selben Thema zusammengefasst werden |
@@ -91,7 +101,7 @@ Weitere Umgebungsvariablen: `ADMIN_PASSWORD`, `LLM_*` und die Key-Variablen der 
 | Weg | Zweck |
 |---|---|
 | RSS/Atom-Feeds der Medien | aktuelle Meldungen, mit Teaser |
-| Nachrichtensuche (`site:domain`, Zeitfenster) | findet auch Artikel, die nicht (mehr) im Feed stehen; im Backfill in 90-Tage-Fenstern bis 2000 |
+| Nachrichtensuche (`site:domain`, Zeitfenster) | findet auch Artikel, die nicht (mehr) im Feed stehen; im Backfill in 90-Tage-Fenstern für den ganzen Erfassungszeitraum |
 | Archivseiten der Medien (Spiegel täglich, tagesschau täglich, ZEIT wöchentlich, heise monatlich) | lückenlose Historie; für Treffer werden Teaser und Datum aus den Meta-Tags der Artikelseite gelesen |
 | Internet Archive (Wayback Machine) | archivierte Schnappschüsse der Feeds (monatlich), auch für Medien ohne eigenes Archiv; außerdem Ersatz, wenn eine Archivseite nicht erreichbar ist |
 

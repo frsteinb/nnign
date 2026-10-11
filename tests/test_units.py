@@ -22,14 +22,12 @@ def test_relevance():
     assert m.score("Kommt man heute noch mit", "") == 0               # 'man' ≠ MAN Truck
 
 
-def test_sentiment():
+def test_sentiment_basics():
+    # ausführliche Referenzfälle: tests/test_sentiment.py
     assert sentiment.score("VW meldet Rekordgewinn") > 0
     assert sentiment.score("Volkswagen streicht 35.000 Stellen") < 0
-    assert sentiment.score("Razzia bei Audi wegen Abgasskandal") < 0
-    assert sentiment.score("Porsche hebt Prognose an") > 0 or sentiment.score("Porsche hebt Prognose an") == 0
-    assert sentiment.score("Werk in Brandenburg schließlich eröffnet") == 0
-    assert sentiment.label(0, "negativ") == "negativ"
-    assert sentiment.label(0.5) == "positiv"
+    assert sentiment.label(0) == "neutral"
+    assert sentiment.label(4) == "positiv" and sentiment.label(-4) == "negativ"
 
 
 def test_textutil():

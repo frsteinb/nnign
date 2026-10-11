@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block title %}Dokumentation – nnign{% endblock %}
+{% block content %}
+<article class="card doc">
+<h1>Dokumentation</h1>
+<p><strong>nnign</strong> („No News Is Good News“) beobachtet seriöse deutschsprachige Medien, sammelt Meldungen über den
+Volkswagen-Konzern, fasst sie zu Nachrichtenthemen zusammen und bewertet jedes Thema als <em>positiv</em>,
+<em>neutral</em> oder <em>negativ</em>. Diese Seite erklärt, wie das System arbeitet. Tabellen, Prompt und
+Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher immer aktuell.</p>
+
+<aside class="notice" id="hinweis">
+  <strong>Wichtiger Hinweis: Dies ist ein Hobbyprojekt.</strong>
+  nnign ist ein privates, nicht kommerzielles Experiment. Es steht in keiner Verbindung zur Volkswagen AG oder zu den
+  ausgewerteten Medien. Auswahl der Quellen, Bewertungskriterien und Gewichte beruhen auf persönlichen Annahmen, die
+  unten offengelegt sind – sie sind weder wissenschaftlich validiert noch vollständig. Die Ergebnisse sind keine
+  Anlage-, Rechts- oder sonstige Beratung und keine verlässliche Aussage über die Lage des Konzerns. Bitte lesen Sie
+  die verlinkten Originalartikel und stellen Sie Ihre eigenen Überlegungen an, bevor Sie aus den Zahlen etwas ableiten.
+</aside>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#ablauf">Ablauf im Überblick</a></li>
+    <li><a href="#quellen">Quellen und Abrufwege</a></li>
+    <li><a href="#zeitraum">Erfassungszeitraum und Aktualisierung</a></li>
+    <li><a href="#relevanz">Relevanz: Betrifft es den VW-Konzern?</a></li>
+    <li><a href="#themen">Themenbildung</a></li>
+    <li><a href="#bewertung">Bewertung positiv / neutral / negativ</a> – mit <a href="#annahmen">Kriterien und Annahmen</a></li>
+    <li><a href="#ki">KI-Analyse und Prompt</a></li>
+    <li><a href="#statistik">Statistik</a></li>
+    <li><a href="#daten">Datenverwaltung im Admin-Bereich</a></li>
+    <li><a href="#einstellungen">Alle Einstellungen</a></li>
+    <li><a href="#api">Schnittstellen</a></li>
+    <li><a href="#grenzen">Grenzen und Hinweise</a></li>
+  </ol>
+</nav>
+
+<h2 id="ablauf">1. Ablauf im Überblick</h2>
+<ol>
+  <li><strong>Abruf</strong> – Meldungen aus RSS-Feeds, Nachrichtensuche, Archivseiten und dem Internet Archive holen.</li>
+  <li><strong>Zeitraum</strong> – nur Meldungen mit Erscheinungsdatum im Erfassungszeitraum werden weiterverarbeitet.</li>
+  <li><strong>Relevanz</strong> – Begriffslisten prüfen, ob die Meldung den VW-Konzern betrifft.</li>
+  <li><strong>Dubletten</strong> – bereits bekannte Meldungen (gleiche URL oder gleicher Titel im selben Medium) werden übersprungen. So entstehen nur <em>neue</em> Einträge.</li>
+  <li><strong>Themenbildung</strong> – die Meldung wird einem bestehenden Thema derselben Nachrichtengeschichte zugeordnet oder eröffnet ein neues.</li>
+  <li><strong>Bewertung</strong> – Regelwerk (immer) und optional KI ergeben positiv, neutral oder negativ, jeweils mit Begründung.</li>
+  <li><strong>Speichern und Anzeigen</strong> – Thema mit Erfassungsdatum, Kurzthema, Abstract, Bewertung, bis zu 5 Quellen und erstem Erscheinungsdatum.</li>
+</ol>
+
+<h2 id="quellen">2. Quellen und Abrufwege</h2>
+<table>
+  <thead><tr><th>Weg</th><th>Wofür</th><th>Wie</th></tr></thead>
+  <tbody>
+  <tr><td>RSS/Atom-Feeds</td><td>aktuelle Meldungen mit Teaser</td><td>Feeds je Medium, siehe unten</td></tr>
+  <tr><td>Nachrichtensuche</td><td>Artikel, die nicht (mehr) im Feed stehen</td><td>Google-News-RSS mit <code>site:domain</code> und Zeitfenstern (<code>after:</code>/<code>before:</code>); Suchbegriffe: <code>{{ cfg('search_query') }}</code></td></tr>
+  <tr><td>Archivseiten</td><td>lückenlose Historie</td><td>URL-Vorlagen mit Datum (Tag/Woche/Monat); für relevante Treffer werden Teaser und genaues Datum aus den Meta-Tags der Artikelseite gelesen</td></tr>
+  <tr><td>Internet Archive</td><td>Historie auch ohne eigenes Archiv</td><td>archivierte Schnappschüsse der Feeds; außerdem Ersatz, wenn eine Archivseite nicht erreichbar ist</td></tr>
+  </tbody>
+</table>
+<p>Zwischen zwei Anfragen an denselben Server liegen mindestens {{ cfg('host_delay_seconds') }} s (Internet Archive
+{{ cfg('wayback_delay_seconds') }} s). Bei Ratelimits (HTTP 429/503) wird einmal gewartet und wiederholt.</p>
+<table>
+  <thead><tr><th>Medium</th><th>Feeds</th><th>Archiv</th><th>Suche</th></tr></thead>
+  <tbody>{% for s in sources %}
+  <tr><td>{{ s.name }}{% if not s.enabled %} <span class="badge">aus</span>{% endif %}</td>
+      <td class="small">{{ s.feeds.splitlines()|length }}</td>
+      <td class="small">{{ s.archive_step ~ ' ab ' ~ (s.archive_since or 'Zeitraumbeginn') if s.archive_template else '–' }}</td>
+      <td class="small">{{ 'ja' if s.use_search else 'nein' }}</td></tr>
+  {% endfor %}</tbody>
+</table>
+
+<h2 id="zeitraum">3. Erfassungszeitraum und Aktualisierung</h2>
+<ul>
+  <li><strong>Erfassungszeitraum:</strong> aktuell {{ since|d }} bis {{ until|d if until else 'laufend' }}. Beim allerersten Start
+    umfasst er die letzten {{ default_days }} Tage (vier Wochen). Der Admin ändert ihn unter <a href="/admin#daten">Admin → Daten &amp; Erfassungszeitraum</a>.</li>
+  <li><strong>Initial-Scan:</strong> beim ersten Start alle Feeds und die Nachrichtensuche in Wochenfenstern für die
+    letzten {{ cfg('initial_recent_days') }} Tage, höchstens bis zum Beginn des Erfassungszeitraums. Ist keine einzige
+    Quelle erreichbar, wird er alle 10 Minuten wiederholt.</li>
+  <li><strong>Regelmäßige Aktualisierung:</strong> alle {{ cfg('scan_interval_hours') }} Stunden Feeds und Suche der
+    letzten zwei Tage; berücksichtigt werden Meldungen bis {{ cfg('regular_lookback_days') }} Tage alt.</li>
+  <li><strong>Historie-Abruf (Backfill):</strong> füllt den Erfassungszeitraum im Hintergrund mit Archivseiten,
+    Suchfenstern von {{ cfg('backfill_search_window_days') }} Tagen und Internet-Archive-Schnappschüssen. Die Reihenfolge
+    ist <em>grob nach fein</em>: erst jede 32. Periode über den ganzen Zeitraum, dann immer dichter. Ein Überblick über
+    alle Jahre entsteht also früh. Jede Aufgabe wird in der Datenbank abgehakt; Neustarts schaden nicht.</li>
+  <li><strong>Abbruchsicherung:</strong> liefert eine Archivquelle {{ breaker }}-mal in Folge nichts (z. B. weil sich
+    eine URL geändert hat), werden ihre restlichen Aufgaben gestoppt und im Admin-Bereich angezeigt.</li>
+</ul>
+
+<h2 id="relevanz">4. Relevanz</h2>
+<p>Eine Meldung gilt als relevant, wenn im <strong>Titel</strong> ein Konzern- oder Markenbegriff vorkommt oder im
+<strong>Teaser</strong> mindestens {{ cfg('min_summary_hits') }} Treffer stehen. Steht im Titel ein Ausschlussbegriff
+(z. B. „VfL Wolfsburg“), wird sie verworfen. Groß-/Kleinschreibung zählt, damit z. B. „man“ nicht als „MAN“ gilt.</p>
+<ul>
+  <li>Konzernbegriffe: {{ cfg('keywords_strong')|join(', ') }}</li>
+  <li>Marken ({{ 'aktiv' if cfg('include_brands') else 'nicht aktiv' }}): {{ cfg('keywords_brands')|join(', ') }}</li>
+  <li>Ausschluss: {{ cfg('keywords_exclude')|join(', ') }}</li>
+</ul>
+<p>Mit KI wird die Relevanz zusätzlich vom Modell geprüft; als nicht relevant erkannte Meldungen werden gespeichert
+(damit sie nicht erneut geprüft werden), erscheinen aber in keinem Thema.</p>
+
+<h2 id="themen">5. Themenbildung</h2>
+<p>Ein Thema ist eine konkrete Nachrichtengeschichte (z. B. „Werksschließungen angekündigt“), kein Dauer-Oberthema.
+Für jede neue Meldung werden die Wörter von Titel (doppelt gewichtet) und Teaser normalisiert und auf Wortstämme
+gekürzt. Allgemeine Wörter wie „VW“, „Konzern“, „Autobauer“ zählen nicht. Dann vergleicht das System sie mit allen
+Themen, deren Meldungen höchstens {{ cfg('cluster_window_days') }} Tage entfernt liegen (TF-IDF-Kosinus-Ähnlichkeit,
+0 bis 1). Ab {{ cfg('cluster_threshold') }} wird die Meldung dem ähnlichsten Thema zugeordnet, sonst entsteht ein neues.</p>
+<ul>
+  <li><strong>Kurzthema</strong>: Titel der frühesten Meldung (mit KI: vom Modell formuliert).</li>
+  <li><strong>Abstract</strong>: Teaser der frühesten Meldung mit Teaser, auf etwa zwei Sätze gekürzt (mit KI: 2–3 Sätze vom Modell).</li>
+  <li><strong>Erstes Datum</strong>: früheste Veröffentlichung einer zugehörigen Meldung. <strong>Erfasst</strong>: wann nnign das Thema angelegt hat.</li>
+  <li><strong>Quellen</strong>: je Medium die früheste Meldung, höchstens {{ cfg('max_sources_per_topic') }}.</li>
+</ul>
+<p>Falsch zusammengefasste Themen lassen sich auf der Themenseite trennen („abtrennen“) oder per Themen-ID zusammenführen.</p>
+
+<h2 id="bewertung">6. Bewertung positiv / neutral / negativ</h2>
+<h3>Bedeutung</h3>
+<table>
+  <tbody>
+  <tr><td><span class="badge positiv">{{ symbol.positiv }} positiv</span></td><td>Für den Konzern grundsätzlich vorteilhaft bzw. nicht von Nachteil: neue Produkte,
+    Verbesserungen, Kundenzuspruch, gute Testergebnisse, gute Entwicklungen im Markt, bessere Finanzergebnisse,
+    Dinge, die das Ansehen stärken.</td></tr>
+  <tr><td><span class="badge negativ">{{ symbol.negativ }} negativ</span></td><td>Kritik, Rückrufaktionen, durchschnittliche oder unterdurchschnittliche
+    Testergebnisse, rückläufige Zahlen bei Absatz/Umsatz/Marge, zeitliche Verzögerungen, Dinge, die dem Ansehen schaden.</td></tr>
+  <tr><td><span class="badge neutral">{{ symbol.neutral }} neutral</span></td><td>Eine Einordnung als positiv oder negativ ist nicht einfach möglich:
+    rein sachliche Meldung, zu schwache Signale oder ausgeglichen gemischte Signale.</td></tr>
+  </tbody>
+</table>
+
+<h3 id="annahmen">Bedeutung der Kriterien und die gewählten Annahmen</h3>
+<p>„Positiv“ und „negativ“ sind hier keine Urteile über Gut und Böse und auch keine Aussage darüber, ob eine
+Meldung zutrifft oder fair ist. Gemeint ist allein: <em>Ist die Nachricht für den VW-Konzern eher vorteilhaft oder eher
+nachteilig?</em> Dahinter stehen folgende Annahmen:</p>
+<table>
+  <thead><tr><th>Kriterium</th><th>Einordnung</th><th>Begründung und Annahme</th></tr></thead>
+  <tbody>
+  <tr><td>Neue Produkte, Premieren, Marktstarts</td><td>positiv</td><td>Neue Modelle sichern künftigen Absatz und zeigen
+    Handlungsfähigkeit. Angenommen wird, dass eine Vorstellung grundsätzlich ein gutes Signal ist – unabhängig davon,
+    ob das Produkt später erfolgreich wird.</td></tr>
+  <tr><td>Verbesserungen, Updates, Innovationen</td><td>positiv</td><td>Behobene Schwächen und technischer Fortschritt
+    stärken Produkt und Ruf. Dass ein Update oft einen vorherigen Mangel voraussetzt, wird bewusst nicht negativ gewertet.</td></tr>
+  <tr><td>Kundenzuspruch, Aufträge, Bestseller</td><td>positiv</td><td>Nachfrage ist der direkteste Erfolgsindikator.</td></tr>
+  <tr><td>Testergebnisse</td><td>gut = positiv; <strong>durchschnittlich oder schlechter = negativ</strong></td><td>Annahme:
+    Von einem großen Hersteller wird überdurchschnittliche Qualität erwartet. Ein nur „befriedigendes“ Ergebnis oder
+    vier von fünf Sternen bleibt hinter dieser Erwartung zurück und wirkt im Wettbewerb eher nachteilig.</td></tr>
+  <tr><td>Kennzahlen (Absatz, Umsatz, Gewinn, Marge, Aktie …)</td><td>nach Richtung</td><td>Steigende „gute“ Kennzahlen
+    sind positiv, sinkende negativ. Bei „schlechten“ Kennzahlen (Verlust, Kosten, Schulden) ist es umgekehrt:
+    <em>sinkende Verluste sind positiv</em>. Die Höhe der Veränderung wird nicht berücksichtigt – ein Minus von 1 % zählt
+    wie eines von 30 %.</td></tr>
+  <tr><td>Prognosen, Erwartungen</td><td>angehoben/übertroffen = positiv; gesenkt/verfehlt = negativ</td><td>Märkte und
+    Öffentlichkeit messen Unternehmen an Erwartungen; eine gesenkte Prognose gilt daher als negativ, auch wenn das
+    absolute Ergebnis noch gut ist.</td></tr>
+  <tr><td>Investitionen, neue Werke, Arbeitsplatzsicherung, Tarifeinigungen</td><td>positiv</td><td>Annahme: Sie stärken
+    Standorte, Zukunftsfähigkeit und Betriebsfrieden. Dass sie Geld kosten, wird nicht gegengerechnet.</td></tr>
+  <tr><td>Auszeichnungen, Nachhaltigkeit, Vorreiterrolle</td><td>positiv</td><td>stärken das Ansehen. Ob eine
+    Auszeichnung bedeutend ist, wird nicht unterschieden.</td></tr>
+  <tr><td>Kooperationen, Partnerschaften</td><td>leicht positiv</td><td>meist als Stärkung gemeint; Gewicht bewusst
+    niedrig, weil der Nutzen oft erst später sichtbar wird.</td></tr>
+  <tr><td>Kritik, Vorwürfe, Proteste</td><td>negativ</td><td>schaden dem Ansehen – <em>unabhängig davon, ob sie berechtigt
+    sind</em>. Bewertet wird die Wirkung der Berichterstattung, nicht ihr Wahrheitsgehalt.</td></tr>
+  <tr><td>Rückrufe</td><td>stark negativ</td><td>verursachen Kosten und Vertrauensverlust. Dass ein Rückruf auch
+    verantwortungsvolles Handeln sein kann, wird bewusst nicht positiv gewertet.</td></tr>
+  <tr><td>Verzögerungen</td><td>negativ</td><td>verspätete Produkte bedeuten entgangenen Absatz und Zweifel an der
+    Umsetzungsfähigkeit.</td></tr>
+  <tr><td>Skandale, Manipulation, Korruption, Menschenrechtsvorwürfe</td><td>stark negativ</td><td>schwerster
+    Ansehensschaden mit Rechts- und Finanzrisiken.</td></tr>
+  <tr><td>Klagen, Ermittlungen, Strafen</td><td>negativ</td><td>Rechtsrisiken und Imageschaden; ein Freispruch oder eine
+    abgewiesene Klage gilt dagegen als positiv.</td></tr>
+  <tr><td>Stellenabbau, Werksschließungen, Sparprogramme</td><td>negativ</td><td>Annahme: Sie sind in der Öffentlichkeit
+    vor allem ein Krisensignal und belasten Ansehen und Betriebsfrieden – auch wenn Sparprogramme betriebswirtschaftlich
+    gewollt sein können.</td></tr>
+  <tr><td>Produktions- und Technikprobleme, Streiks</td><td>negativ</td><td>bedeuten Ausfälle, Kosten und Ärger bei Kunden.</td></tr>
+  <tr><td>Personalwechsel an der Spitze</td><td>leicht negativ</td><td>Annahme: Rücktritte und Machtkämpfe signalisieren
+    Unruhe. Eine reine Ernennung ohne Konflikt gilt als neutral.</td></tr>
+  <tr><td>Zölle, Sanktionen, Fahrverbote</td><td>leicht negativ</td><td>belasten Geschäft und Absatz, liegen aber oft
+    außerhalb des Einflusses des Konzerns.</td></tr>
+  <tr><td>Unfälle, Sorgen, Warnungen, Risiken</td><td>leicht bis mittel negativ</td><td>wirken auf Vertrauen und Ausblick.</td></tr>
+  <tr><td>Sachliche Meldungen, ausgeglichene Mischungen</td><td>neutral</td><td>Wenn sich keine klare Tendenz ergibt, ist
+    „neutral“ ehrlicher als eine erzwungene Einordnung.</td></tr>
+  </tbody>
+</table>
+<p><strong>Weitere Annahmen:</strong></p>
+<ul>
+  <li><strong>Perspektive:</strong> stets die des Konzerns als Ganzes – nicht die von Beschäftigten, Kunden, Aktionären oder
+    der Umwelt. Eine Meldung kann für eine dieser Gruppen ganz anders aussehen (z. B. ein Sparprogramm aus Aktionärssicht).</li>
+  <li><strong>Gewichte</strong> (−3 bis +3) drücken eine grob geschätzte Tragweite aus: Rückrufe und Skandale wiegen schwer,
+    Kooperationen leicht. Die Werte sind gesetzt, nicht gemessen.</li>
+  <li><strong>Der Titel zählt doppelt</strong>, weil er den Ton einer Meldung setzt und oft als Einziges vorliegt.</li>
+  <li><strong>Ein Thema</strong> erhält die Summe der Signale aller seiner Meldungen; viele Meldungen mit gleicher Tendenz
+    verstärken also die Einordnung.</li>
+  <li><strong>Nicht berücksichtigt</strong> werden: Wahrheitsgehalt und Ton des Mediums, Größe der betroffenen Zahlen,
+    Bedeutung des Marktes, Glaubwürdigkeit der Quelle und tatsächliche Folgen (z. B. Kursreaktionen).</li>
+  <li>Die KI erhält dieselben Kriterien im Prompt, entscheidet aber im Einzelfall selbst und kann daher abweichen.</li>
+</ul>
+<p>Wer andere Annahmen für richtig hält, kann Gewichte über eigene Begriffe, die Neutral-Marge und den KI-Prompt im
+Admin-Bereich anpassen – oder die Zahlen einfach mit der gebotenen Vorsicht lesen.</p>
+
+<h3>Wie das Regelwerk bewertet</h3>
+<ol>
+  <li>Der Text wird normalisiert (Kleinschreibung, „ä“ → „a“, „ß“ → „ss“) und in Sätze zerlegt.</li>
+  <li><strong>Kennzahl + Richtung</strong> (Gewicht ±{{ pair_weight }}): steht eine Kennzahl höchstens fünf Wörter
+    vor oder drei Wörter nach einer Richtung, zählt die Kombination. Bei „guten“ Kennzahlen ist <em>steigen</em> positiv,
+    bei „schlechten“ Kennzahlen (Verlust, Kosten …) ist <em>sinken</em> positiv. So wird „Verlust sinkt“ positiv und
+    „Absatz sinkt“ negativ. Diese Stellen werden danach ausgeblendet, damit Wörter darin nicht doppelt zählen.
+    <ul class="small">
+      <li>gute Kennzahlen: {{ metrics_good }}</li>
+      <li>schlechte Kennzahlen: {{ metrics_bad }}</li>
+      <li>aufwärts: {{ up }}</li>
+      <li>abwärts: {{ down }}</li>
+    </ul></li>
+  <li><strong>Regeln je Kategorie</strong> (Tabelle unten): jede Regel zählt je Titel bzw. Teaser höchstens einmal,
+    damit z. B. „Rückruf: VW ruft … zurück“ nicht doppelt gewertet wird.</li>
+  <li><strong>Verneinung</strong>: steht „kein“, „nicht“, „ohne“, „kaum“ o. Ä. in den drei Wörtern davor, kehrt sich
+    das Signal mit halbem Gewicht um („kein Stellenabbau“ → leicht positiv). „trotz“ davor schwächt auf ein Viertel ab
+    („trotz Krise …“).</li>
+  <li><strong>Titel zählt doppelt</strong>, der Teaser einfach.</li>
+  <li><strong>Klasse</strong>: aus der Summe positiver (P) und negativer (N) Signale.
+    <ul>
+      <li>neutral, wenn P + N &lt; 0,5 (keine Signale),</li>
+      <li>neutral, wenn |P − N| &lt; {{ margin }} (Neutral-Marge),</li>
+      <li>neutral, wenn die schwächere Seite mindestens {{ (mixed * 100)|round|int }} % der stärkeren erreicht (gemischt),</li>
+      <li>sonst positiv bei P &gt; N, negativ bei N &gt; P.</li>
+    </ul></li>
+  <li><strong>Thema</strong>: die Signale aller Meldungen eines Themas werden addiert und nach derselben Regel eingeordnet.
+    Die Themenseite zeigt unter „Warum diese Bewertung?“ die stärksten Signale mit Gewicht.</li>
+</ol>
+
+<h3>Regeln</h3>
+<table>
+  <thead><tr><th>Kategorie</th><th>Gewicht</th><th>Beispiele</th></tr></thead>
+  <tbody>{% for r in rules %}
+  <tr><td>{{ r.category }}</td><td>{{ '%+.1f'|format(r.weight) }}</td><td class="small">{{ r.example }}</td></tr>
+  {% endfor %}
+  {% for line in extra_terms %}<tr><td>Eigener Begriff</td><td colspan="2" class="small">{{ line }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+<details><summary>Genaue Suchmuster anzeigen</summary>
+  <table class="small"><tbody>{% for r in rules %}<tr><td>{{ r.category }}</td><td><code>{{ r.pattern }}</code></td></tr>{% endfor %}</tbody></table>
+</details>
+
+<h3>Anpassen und korrigieren</h3>
+<ul>
+  <li><strong>Eigene Begriffe</strong> (Admin → Einstellungen → Bewertung): eine Zeile je Begriff, z. B. <code>lieferstopp = -3</code>.</li>
+  <li><strong>Neutral-Marge</strong> und <strong>Gemischt-Schwelle</strong> steuern, wie schnell „neutral“ vergeben wird.</li>
+  <li><strong>Bewertungen neu berechnen</strong> (Admin → Status) wendet geänderte Regeln auf alle vorhandenen Meldungen an.
+    KI-bewertete und manuell bearbeitete Themen bleiben dabei unverändert.</li>
+  <li><strong>Manuelle Korrektur</strong> auf der Themenseite („Bearbeiten“) sperrt das Thema gegen automatische Änderungen.</li>
+</ul>
+
+<h2 id="ki">7. KI-Analyse und Prompt</h2>
+<p>Status: <strong>{{ llm_status }}</strong>. Ohne KI arbeitet nnign vollständig mit dem Regelwerk.
+Mit KI ersetzt das Modell bei neuen Themen Kurztitel, Abstract und Bewertung und entscheidet über die Zuordnung.
+Das Regelwerk läuft trotzdem mit; seine Signale werden zusätzlich gespeichert.</p>
+
+<h3>Wann das Modell gefragt wird</h3>
+<ul>
+  <li>Für jede neue, nach den Begriffslisten relevante Meldung, <em>außer</em> sie passt mit einer Ähnlichkeit ≥ 0,6
+    eindeutig zu einem bestehenden Thema (dann wird ohne KI zugeordnet).</li>
+  <li>Höchstens {{ cfg('llm_max_calls_per_day') }} Aufrufe pro Tag; danach regelbasiert weiter.</li>
+  <li>Beim Historie-Abruf nur, wenn „KI auch für historischen Backfill“ aktiv ist (derzeit: {{ 'ja' if cfg('llm_for_backfill') else 'nein' }}).</li>
+  <li>Bei Fehlern, Zeitüberschreitung oder Ablehnung durch das Modell wird regelbasiert weitergearbeitet.</li>
+</ul>
+
+<h3>Aufbau der Anfrage</h3>
+<p>Jede Anfrage besteht aus genau zwei Nachrichten und einem festen Antwortformat:</p>
+<ol>
+  <li><strong>System-Prompt</strong>: Rolle und Grundregeln (unten, vom Admin änderbar).</li>
+  <li><strong>Nutzer-Nachricht</strong> = Arbeitsanweisung (vom Admin änderbar) + Leerzeile + <code>Daten:</code> +
+    JSON mit der Meldung (Titel, Teaser, Quelle, Datum) und bis zu fünf <em>Kandidaten-Themen</em>: Themen aus dem
+    Zeitfenster mit einer Ähnlichkeit ab 0,08, jeweils mit ID, Titel, Abstract und Zeitraum.</li>
+  <li><strong>Antwortformat</strong>: ein JSON-Objekt nach dem Schema unten. Das Format ist fest, weil das Programm
+    die Felder auswertet.</li>
+</ol>
+<table>
+  <thead><tr><th>Anbieter</th><th>Technische Form der Anfrage</th></tr></thead>
+  <tbody>
+  <tr><td>anthropic</td><td class="small">Anthropic-SDK: <code>messages.create(model, max_tokens=4000, system=&lt;System-Prompt&gt;,
+    messages=[{role: user, content: &lt;Nutzer-Nachricht&gt;}], output_config={effort: „{{ cfg('llm_effort') }}“,
+    format: {type: json_schema, schema: &lt;Schema&gt;}})</code>; zusätzlich serverseitige Ausweich-Modelle bei Ablehnung
+    (<code>fallbacks: "default"</code>), sofern verfügbar.</td></tr>
+  <tr><td>openai, gemini, mistral, groq, openrouter, ollama, openai_compatible</td><td class="small">
+    <code>POST &lt;Basis-URL&gt;/chat/completions</code>, Header <code>Authorization: Bearer &lt;Key&gt;</code>, Body
+    <code>{model, messages: [{role: system, …}, {role: user, …}], response_format: {type: json_schema,
+    json_schema: {name: "nachrichtenanalyse", strict: true, schema: &lt;Schema&gt;}}}</code>. Lehnt der Server das ab
+    (HTTP 400/422), folgt <code>response_format: {type: json_object}</code>, dann ganz ohne Format; in diesen Fällen wird
+    der Nutzer-Nachricht eine Formatbeschreibung angehängt (unten). Das funktionierende Format wird gemerkt.</td></tr>
+  <tr><td>azure</td><td class="small">wie oben, aber <code>POST &lt;Endpoint&gt;/openai/deployments/&lt;Modell&gt;/chat/completions?api-version={{ cfg('azure_api_version') }}</code>,
+    Header <code>api-key</code>, ohne <code>model</code> im Body.</td></tr>
+  </tbody>
+</table>
+<p class="small muted">Aktuell gewählt: Anbieter {{ provider }}, Modell {{ model or '(nicht gesetzt)' }}.</p>
+
+<h3>System-Prompt {% if prompt_custom %}<span class="badge">vom Admin angepasst</span>{% endif %}</h3>
+<pre>{{ system_prompt }}</pre>
+<h3>Arbeitsanweisung</h3>
+<pre>{{ instructions }}</pre>
+<p class="small">Ändern: <a href="/admin#einstellungen">Admin → Einstellungen → KI</a>. „auf Standard“ stellt den mitgelieferten
+Text wieder her. Die Felder des Antwortformats sollten in der Anweisung weiter erklärt werden, da das Modell sie
+füllen muss.</p>
+
+<h3>Beispiel einer vollständigen Nutzer-Nachricht</h3>
+<pre>{{ example_user }}</pre>
+<h3>Antwortformat (JSON-Schema)</h3>
+<pre>{{ schema }}</pre>
+<p class="small">Formatbeschreibung für Server ohne strukturierte Ausgabe:</p>
+<pre>{{ format_hint }}</pre>
+
+<h3>Auswertung der Antwort</h3>
+<ul>
+  <li><code>relevant = false</code> → Meldung wird als nicht relevant gespeichert und keinem Thema zugeordnet.</li>
+  <li><code>match_topic_id</code> = ID eines Kandidaten → Meldung kommt in dieses Thema; 0 oder unbekannte ID → neues Thema.</li>
+  <li>Neues Thema: <code>topic_title</code>, <code>abstract</code>, <code>sentiment</code> (positiv/neutral/negativ),
+    <code>begruendung</code> und <code>confidence</code> werden übernommen und auf der Themenseite angezeigt.</li>
+  <li>Antworten außerhalb des Formats werden verworfen (regelbasiert weiter). Steckt das JSON in einem Codeblock, wird es herausgelöst.</li>
+</ul>
+
+<h2 id="statistik">8. Statistik</h2>
+<p>Der Kasten „Datenbestand“ auf der Startseite bezieht sich immer auf die aktuelle Auswahl (Filter, Jahr, Suche).</p>
+<table><tbody>
+  <tr><td>Themen</td><td>Anzahl Themen in der Auswahl (ausgeblendete Themen zählen nicht).</td></tr>
+  <tr><td>Meldungen</td><td>Summe der Meldungen dieser Themen.</td></tr>
+  <tr><td>Medien</td><td>Anzahl unterschiedlicher Medien, aus denen diese Meldungen stammen.</td></tr>
+  <tr><td>Meldungen je Thema</td><td>Durchschnitt; ein hoher Wert bedeutet breite Berichterstattung.</td></tr>
+  <tr><td>Zeitraum</td><td>frühestes erstes Datum bis spätestes letztes Datum der Themen; dazu der Beginn des Erfassungszeitraums.</td></tr>
+  <tr><td>Anteile</td><td>Anteil positiver, neutraler und negativer Themen (gerundet); ein Klick filtert danach.</td></tr>
+  <tr><td>Top-Medien</td><td>Medien mit den meisten Themen in der Auswahl.</td></tr>
+  <tr><td>Bewertet durch</td><td>wie viele Themen von den Regeln, der KI oder manuell bewertet wurden.</td></tr>
+  <tr><td>mit mehreren Meldungen</td><td>Anteil der Themen, über die mehr als eine Meldung vorliegt.</td></tr>
+</tbody></table>
+<p>Der Zeitstrahl zeigt je Jahr (nach Klick je Monat) positive Themen nach oben, neutrale mittig auf der Nulllinie und
+negative nach unten. Solange der Historie-Abruf läuft, ist die Historie unvollständig; die Anteile sind dann eine Stichprobe.</p>
+
+<h2 id="daten">9. Datenverwaltung im Admin-Bereich</h2>
+<table><tbody>
+  <tr><td>Zeitraum ändern</td><td>„von“/„bis“ setzen. Früheres „von“ plant den Abruf der zusätzlichen Historie ein,
+    späteres stoppt offene Abrufe davor. Optional werden vorhandene Daten außerhalb gelöscht.</td></tr>
+  <tr><td>Jetzt aktualisieren</td><td>sofortiger Abruf aller Quellen, unabhängig vom Intervall.</td></tr>
+  <tr><td>Historie-Abruf anhalten/fortsetzen</td><td>pausiert den Hintergrundabruf, z. B. bei knapper Bandbreite.</td></tr>
+  <tr><td>Abrufe neu planen / Fehlgeschlagene wiederholen</td><td>nach Änderungen an Quellen bzw. nach Netzproblemen.</td></tr>
+  <tr><td>Zeitraum löschen</td><td>löscht Meldungen eines Datumsbereichs; leere Themen entfallen.</td></tr>
+  <tr><td>Neu initialisieren</td><td>löscht alle erfassten Daten und startet einen neuen Initial-Scan; wahlweise mit
+    Werkseinstellungen (Standard-Zeitraum vier Wochen, Standard-Quellen; das Admin-Passwort bleibt). Bestätigung durch Eintippen von LÖSCHEN.</td></tr>
+  <tr><td>Bewertungen neu berechnen</td><td>wendet geänderte Bewertungsregeln auf den Bestand an.</td></tr>
+</tbody></table>
+
+<h2 id="einstellungen">10. Alle Einstellungen</h2>
+<p>Rangfolge: Wert aus dem Admin-Bereich &gt; Umgebungsvariable &gt; Standard. Leere Umgebungsvariablen gelten als nicht gesetzt.</p>
+<table>
+  <thead><tr><th>Einstellung</th><th>Umgebungsvariable</th><th>Standard</th></tr></thead>
+  <tbody>{% for r in settings_rows %}
+    <tr><td><strong>{{ r.s.label }}</strong><div class="small muted">{{ r.s.group }}{% if r.s.help %} – {{ r.s.help }}{% endif %}</div></td>
+        <td class="small"><code>{{ r.envs|join('</code> / <code>')|safe }}</code></td>
+        <td class="small">{% if r.s.type == 'secret' %}–{% elif r.s.type in ('list', 'text') %}{{ 'siehe Admin' if r.default else 'leer' }}{% else %}{{ r.default if r.default != '' else 'leer' }}{% endif %}</td></tr>
+  {% endfor %}</tbody>
+</table>
+<p class="small">Außerdem: <code>ADMIN_PASSWORD</code>, <code>DATA_DIR</code>, <code>LOG_LEVEL</code>, <code>TZ</code>, Proxy-Variablen
+(<code>HTTPS_PROXY</code>) und die API-Key-Variablen der KI-Anbieter
+({% for n, p in providers.items() if p.key_env %}{{ p.key_env|join(', ') }}{{ ', ' if not loop.last }}{% endfor %}), dazu <code>AZURE_OPENAI_ENDPOINT</code>, <code>OLLAMA_HOST</code>.</p>
+
+<h2 id="api">11. Schnittstellen</h2>
+<table><tbody>
+  <tr><td><code>/api/topics</code></td><td>Themen als JSON (Filter wie auf der Startseite: <code>q</code>, <code>sentiment</code>, <code>year</code>, <code>source</code>, <code>date_from</code>, <code>date_to</code>, <code>page</code>, <code>size</code>, <code>order</code>)</td></tr>
+  <tr><td><code>/api/topics/{id}</code></td><td>ein Thema mit allen Meldungen und Begründung</td></tr>
+  <tr><td><code>/api/stats</code></td><td>die Statistik zur Auswahl</td></tr>
+  <tr><td><code>/api/timeline</code></td><td>Zeitstrahl-Daten</td></tr>
+  <tr><td><code>/api/status</code></td><td>Betriebsstatus</td></tr>
+  <tr><td><code>/export.csv</code></td><td>CSV-Export der Auswahl (Semikolon, UTF-8)</td></tr>
+  <tr><td><code>/docs</code></td><td>automatisch erzeugte technische API-Dokumentation</td></tr>
+</tbody></table>
+
+<h2 id="grenzen">12. Grenzen und Hinweise</h2>
+<ul>
+  <li>Bewertungen sind automatisch erzeugt und können irren – insbesondere bei Ironie, Zitaten, Meldungen mit vielen
+    Aspekten oder wenn nur der Titel vorliegt. Die Begründung auf der Themenseite zeigt, worauf die Bewertung beruht.</li>
+  <li>Das Regelwerk erkennt typische Formulierungen deutscher Wirtschaftsmeldungen; ungewöhnliche Wortwahl kann es
+    übersehen. Mit KI werden solche Fälle meist besser erfasst.</li>
+  <li>Freie Archive haben Lücken (z. B. depublizierte Inhalte, Bezahlschranken). Die Historie ist daher eine
+    möglichst breite, aber keine vollständige Erfassung.</li>
+  <li>Gespeichert werden nur Titel, Teaser und Links, keine Volltexte.</li>
+</ul>
+</article>
+{% endblock %}

@@ -43,7 +43,8 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-}
       # Vorbelegungen (leer = eingebauter Standard)
       NNIGN_SCAN_INTERVAL_HOURS: ${NNIGN_SCAN_INTERVAL_HOURS:-}
-      NNIGN_BACKFILL_SINCE: ${NNIGN_BACKFILL_SINCE:-}
+      NNIGN_COLLECT_SINCE: ${NNIGN_COLLECT_SINCE:-}      # leer = beim Erststart die letzten vier Wochen
+      NNIGN_COLLECT_UNTIL: ${NNIGN_COLLECT_UNTIL:-}
       NNIGN_BACKFILL_ENABLED: ${NNIGN_BACKFILL_ENABLED:-}
       NNIGN_PUBLIC_DASHBOARD: ${NNIGN_PUBLIC_DASHBOARD:-}
       # Nur nötig, wenn der Server ausschließlich über einen Proxy ins Internet kommt:

@@ -1,6 +1,7 @@
 """Scans, historischer Backfill und Zeitsteuerung."""
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -28,6 +29,7 @@ STATUS: dict = {
     "backfill": None,      # {"phase", "batch", ...}
     "next_scan_at": None,
     "last_error": None,
+    "reclassify": None,
 }
 
 # Abbruch einer Archivquelle nach so vielen Fehlschlägen bzw. leeren Seiten in Folge
@@ -59,15 +61,16 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
     ctx.fetched += len(items)
     matcher = Matcher.from_config()
     now = datetime.now(timezone.utc)
-    tie = config.get("sentiment_tie")
     window = int(config.get("cluster_window_days"))
     threshold = float(config.get("cluster_threshold"))
 
-    # 1. Relevanz (billig) und Dubletten innerhalb des Abrufs
+    # 1. Zeitraum, Relevanz (billig) und Dubletten innerhalb des Abrufs
     fresh: dict[tuple, Item] = {}
     for it in items:
         it.url = normalize_url(it.url)
         if max_age_days is not None and (now - it.published).days > max_age_days:
+            continue
+        if not in_period(it.published.date()):
             continue
         if it.published > now + timedelta(hours=6):
             it.published = now
@@ -114,7 +117,9 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                 continue
             vec = topics.article_vector(it.title, it.summary)
             pub = it.published.replace(microsecond=0).isoformat()
-            art_score = sentiment.score(it.title, it.summary)
+            senti = sentiment.analyze(it.title, it.summary)
+            art_score = senti.score
+            art_detail = senti.detail()
             matches = topics.best_matches(conn, vec, it.published, idf, window)
             best_sim, best_row = matches[0] if matches else (0.0, None)
 
@@ -140,17 +145,20 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                     else:
                         topic_id = topics.create_topic(
                             conn, res["topic_title"].strip() or it.title, res["abstract"].strip(),
-                            res["sentiment"], art_score, "llm", pub, vec)
+                            res["sentiment"], art_score, "llm", pub, vec,
+                            {"llm": res.get("begruendung", ""), "confidence": res.get("confidence"),
+                             "model": llm.describe(), **art_detail})
                         ctx.new_topics += 1
                 else:
-                    topic_id = _heuristic_topic(conn, it, vec, pub, art_score, best_sim, best_row,
-                                                threshold, tie, ctx)
+                    topic_id = _heuristic_topic(conn, it, vec, pub, senti, best_sim, best_row,
+                                                threshold, ctx)
                 conn.execute(
                     "INSERT OR IGNORE INTO articles(url, title, title_key, summary, source_name, source_domain, "
-                    "published_at, fetched_at, via, relevant, sentiment_score, topic_id) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "published_at, fetched_at, via, relevant, sentiment_score, sentiment_detail, topic_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (it.url, it.title, tkey, it.summary, it.source_name, it.source_domain, pub, db.utcnow(),
-                     it.via, relevant, art_score, topic_id if relevant else None))
+                     it.via, relevant, art_score, json.dumps(art_detail, ensure_ascii=False),
+                     topic_id if relevant else None))
                 if relevant:
                     idf.add_document(vec.keys())
                     ctx.new_articles += 1
@@ -159,18 +167,45 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                         topics.refresh(conn, topic_id)
 
 
-def _heuristic_topic(conn, it, vec, pub, art_score, best_sim, best_row, threshold, tie, ctx) -> int:
+def _heuristic_topic(conn, it, vec, pub, senti, best_sim, best_row, threshold, ctx) -> int:
     if best_row is not None and best_sim >= threshold:
         return best_row["id"]
     ctx.new_topics += 1
-    return topics.create_topic(conn, it.title, shorten(it.summary or ""), sentiment.label(art_score, tie),
-                               art_score, "lexikon", pub, vec)
+    return topics.create_topic(conn, it.title, shorten(it.summary or ""), sentiment.label_for(senti),
+                               senti.score, "lexikon", pub, vec, senti.detail())
 
 
 def _source_status(src_id: int, status: str, n: int) -> None:
     with db.tx() as conn:
         conn.execute("UPDATE sources SET last_fetch_at=?, last_status=?, last_items=? WHERE id=?",
                      (db.utcnow(), status[:300], n, src_id))
+
+
+def reclassify() -> dict:
+    """Regelbasierte Bewertung aller Meldungen neu berechnen (z. B. nach geänderten Regeln).
+    KI-bewertete und manuell bearbeitete Themen behalten ihre Bewertung."""
+    STATUS["reclassify"] = "läuft"
+    n_art = n_topic = 0
+    try:
+        rows = db.query("SELECT id, title, summary FROM articles")
+        with _ingest_lock:
+            for i in range(0, len(rows), 500):
+                with db.tx() as conn:
+                    for a in rows[i:i + 500]:
+                        r = sentiment.analyze(a["title"], a["summary"])
+                        conn.execute("UPDATE articles SET sentiment_score=?, sentiment_detail=? WHERE id=?",
+                                     (r.score, json.dumps(r.detail(), ensure_ascii=False), a["id"]))
+                        n_art += 1
+            ids = [r["id"] for r in db.query("SELECT id FROM topics WHERE locked=0 AND sentiment_origin='lexikon'")]
+            for i in range(0, len(ids), 500):
+                with db.tx() as conn:
+                    for tid in ids[i:i + 500]:
+                        topics.refresh(conn, tid)
+                        n_topic += 1
+    finally:
+        STATUS["reclassify"] = None
+    log.info("Neu bewertet: %d Meldungen, %d Themen", n_art, n_topic)
+    return {"articles": n_art, "topics": n_topic}
 
 
 # ====================================================================== Scans
@@ -181,6 +216,9 @@ def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool) -> list[Item]:
     query = config.get("search_query")
     recent_days = int(config.get("initial_recent_days"))
     today = datetime.now(timezone.utc).date()
+    since, until = period()
+    search_from = max(since, today - timedelta(days=recent_days))
+    search_to = min(until or today, today)
 
     def work(src):
         got, errors = [], []
@@ -192,7 +230,7 @@ def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool) -> list[Item]:
         if search and src["use_search"]:
             try:
                 if initial:
-                    for start, end in fetcher.iter_periods(today - timedelta(days=recent_days), today, "week"):
+                    for start, end in fetcher.iter_periods(search_from, search_to, "week"):
                         got += fetcher.fetch_search(http, src, query, after=start - timedelta(days=1),
                                                     before=end + timedelta(days=1))
                 else:
@@ -267,19 +305,43 @@ def _priority(i: int) -> int:
     return max(0, 5 - min(5, tz))
 
 
-def _date_setting(key: str, default: date) -> date:
-    raw = (config.get(key) or "").strip()
+DEFAULT_PERIOD_DAYS = 28  # Standard beim Erststart: die letzten vier Wochen
+
+
+def ensure_default_period() -> None:
+    """Beim allerersten Start den Standard-Beginn festhalten, damit er nicht täglich mitwandert."""
+    if not config.state_get("default_collect_since"):
+        start = datetime.now(timezone.utc).date() - timedelta(days=DEFAULT_PERIOD_DAYS)
+        config.state_set("default_collect_since", start.isoformat())
+
+
+def _parse_date(raw) -> date | None:
     try:
-        return date.fromisoformat(raw) if raw else default
+        return date.fromisoformat(str(raw).strip()) if raw and str(raw).strip() else None
     except ValueError:
-        return default
+        return None
+
+
+def period() -> tuple[date, date | None]:
+    """Erfassungszeitraum (von, bis); bis = None bedeutet laufend."""
+    today = datetime.now(timezone.utc).date()
+    since = (_parse_date(config.get("collect_since")) or _parse_date(config.state_get("default_collect_since"))
+             or today - timedelta(days=DEFAULT_PERIOD_DAYS))
+    until = _parse_date(config.get("collect_until"))
+    return since, until
+
+
+def in_period(d: date) -> bool:
+    since, until = period()
+    return d >= since and (until is None or d <= until)
 
 
 def plan_backfill() -> int:
-    """Legt (idempotent) Backfill-Aufgaben an. Gibt die Zahl neu angelegter Aufgaben zurück."""
+    """Legt (idempotent) Backfill-Aufgaben für den Erfassungszeitraum an.
+    Gibt die Zahl neu angelegter Aufgaben zurück."""
     today = datetime.now(timezone.utc).date()
-    since = _date_setting("backfill_since", date(2000, 1, 1))
-    until = _date_setting("backfill_until", today)
+    since, until = period()
+    until = min(until or today, today)
     recent_days = int(config.get("initial_recent_days"))
     win = max(7, int(config.get("backfill_search_window_days")))
     search = bool(config.get("search_enabled"))
@@ -319,6 +381,73 @@ def plan_backfill() -> int:
     return created
 
 
+OUTSIDE_MARK = "Außerhalb des Erfassungszeitraums"
+
+
+def apply_period(since: date, until: date | None, purge: bool = False) -> dict:
+    """Erfassungszeitraum setzen: Aufgaben außerhalb stoppen, innerhalb (wieder) einplanen,
+    optional Daten außerhalb löschen."""
+    config.set("collect_since", since.isoformat())
+    config.set("collect_until", until.isoformat() if until else "")
+    hi = (until or date(9999, 12, 31)).isoformat()
+    with db.tx() as conn:
+        stopped = conn.execute(
+            "UPDATE backfill_tasks SET status='übersprungen', error=? WHERE status='offen' "
+            "AND method!='wayback_index' AND (period_end<? OR period_start>?)",
+            (OUTSIDE_MARK, since.isoformat(), hi)).rowcount
+        revived = conn.execute(
+            "UPDATE backfill_tasks SET status='offen', attempts=0, error='' WHERE status='übersprungen' "
+            "AND error=? AND period_end>=? AND period_start<=?", (OUTSIDE_MARK, since.isoformat(), hi)).rowcount
+    planned = plan_backfill()
+    deleted = {"articles": 0, "topics": 0}
+    if purge:
+        a = delete_range(None, since - timedelta(days=1))
+        b = delete_range(until + timedelta(days=1), None) if until else {"articles": 0, "topics": 0}
+        deleted = {k: a[k] + b[k] for k in a}
+    _wake.set()
+    return {"stopped": stopped, "revived": revived, "planned": planned, **deleted}
+
+
+def delete_range(d_from: date | None, d_to: date | None) -> dict:
+    """Meldungen mit Erscheinungsdatum im Bereich löschen; leere Themen entfallen, übrige werden neu berechnet."""
+    lo = d_from.isoformat() if d_from else "0000"
+    hi = (d_to.isoformat() + "T23:59:59") if d_to else "9999"
+    with _ingest_lock, db.tx() as conn:
+        affected = [r["topic_id"] for r in conn.execute(
+            "SELECT DISTINCT topic_id FROM articles WHERE published_at>=? AND published_at<=? "
+            "AND topic_id IS NOT NULL", (lo, hi))]
+        n_art = conn.execute("DELETE FROM articles WHERE published_at>=? AND published_at<=?", (lo, hi)).rowcount
+        n_top = 0
+        for tid in affected:
+            if not conn.execute("SELECT 1 FROM articles WHERE topic_id=?", (tid,)).fetchone():
+                conn.execute("DELETE FROM topics WHERE id=?", (tid,))
+                n_top += 1
+            else:
+                topics.rebuild_signature(conn, tid)
+                topics.refresh(conn, tid)
+    log.info("Gelöscht: %d Meldungen, %d Themen (%s bis %s)", n_art, n_top, lo, hi)
+    return {"articles": n_art, "topics": n_top}
+
+
+def wipe(factory: bool = False) -> None:
+    """Alle erfassten Daten löschen und neu initialisieren. factory=True setzt zusätzlich Einstellungen
+    und Quellen auf den Auslieferungszustand zurück (Admin-Passwort bleibt erhalten)."""
+    with _ingest_lock, _scan_lock, db.tx() as conn:
+        for table in ("articles", "topics", "token_df", "runs", "backfill_tasks"):
+            conn.execute(f"DELETE FROM {table}")
+        conn.execute("DELETE FROM settings WHERE key IN ('_initial_done')")
+        if factory:
+            conn.execute("DELETE FROM settings WHERE key NOT IN ('_admin_pw_hash')")
+            conn.execute("DELETE FROM sources")
+    _breaker_counts.clear()
+    if factory:
+        from .sources import seed_sources
+        seed_sources()
+        ensure_default_period()
+    log.warning("Datenbestand gelöscht (%s) – Initial-Scan folgt", "Werkseinstellung" if factory else "Daten")
+    _wake.set()
+
+
 def backfill_progress() -> dict:
     rows = db.query("SELECT status, COUNT(*) n FROM backfill_tasks GROUP BY status")
     counts = {r["status"]: r["n"] for r in rows}
@@ -346,8 +475,8 @@ def _run_task(http: fetcher.Http, task, src) -> tuple[list[Item], list[tuple]]:
         return fetcher.parse_search(resp.content, src), []
     if method == "wayback_index":
         today = datetime.now(timezone.utc).date()
-        since = _date_setting("backfill_since", date(2000, 1, 1))
-        until = _date_setting("backfill_until", today)
+        since, until = period()
+        until = min(until or today, today)
         snaps = fetcher.wayback_index(http, task["target"], since, until,
                                       config.get("backfill_wayback_granularity"))
         subs = []

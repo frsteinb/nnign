@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS topics (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     title              TEXT NOT NULL,
     abstract           TEXT NOT NULL DEFAULT '',
-    sentiment          TEXT NOT NULL,            -- 'positiv' | 'negativ'
+    sentiment          TEXT NOT NULL,            -- 'positiv' | 'neutral' | 'negativ'
+    sentiment_detail   TEXT NOT NULL DEFAULT '{}', -- Begründung (Regeltreffer bzw. KI-Begründung)
     sentiment_score    REAL NOT NULL DEFAULT 0,
     sentiment_origin   TEXT NOT NULL DEFAULT 'lexikon', -- lexikon | llm | manuell
     first_published_at TEXT NOT NULL,            -- erstes Erscheinungsdatum einer Quelle
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS articles (
     via           TEXT NOT NULL,                 -- rss | suche
     relevant      INTEGER NOT NULL DEFAULT 1,
     sentiment_score REAL NOT NULL DEFAULT 0,
+    sentiment_detail TEXT NOT NULL DEFAULT '{}',
     topic_id      INTEGER REFERENCES topics(id) ON DELETE SET NULL,
     UNIQUE(title_key, source_domain)
 );
@@ -152,6 +154,17 @@ def query_one(sql: str, params=()):
     return connect().execute(sql, params).fetchone()
 
 
+# Spalten, die nach der ersten Version hinzugekommen sind (für bestehende Datenbanken)
+MIGRATIONS = [
+    ("topics", "sentiment_detail", "TEXT NOT NULL DEFAULT '{}'"),
+    ("articles", "sentiment_detail", "TEXT NOT NULL DEFAULT '{}'"),
+]
+
+
 def init_db() -> None:
     with tx() as conn:
         conn.executescript(SCHEMA)
+        for table, column, decl in MIGRATIONS:
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")

@@ -14,15 +14,80 @@
     <dt>Backfill</dt><dd>{{ st.backfill.percent }} % ({{ st.backfill.done }} / {{ st.backfill.total }}) –
       {% for k, v in st.backfill.counts.items() %}{{ k }}: {{ v }}{{ ', ' if not loop.last }}{% endfor %}
       {% if st.backfill_running %}<br><span class="pulse"></span> {{ st.backfill_running.phase }} ({{ st.backfill_running.range }}){% endif %}</dd>
+    <dt>Bewertung</dt><dd>{{ st.positive }} positiv · {{ st.neutral }} neutral · {{ st.negative }} negativ
+      {% if st.reclassify_running %}<br><span class="pulse"></span> Neu-Bewertung läuft …{% endif %}</dd>
     <dt>KI-Analyse</dt><dd>{{ st.llm_status }} · heute {{ st.llm_calls_today }} Aufrufe</dd>
     <dt>Themen / Meldungen</dt><dd>{{ st.topics }} / {{ st.articles }}</dd>
   </dl>
   <div class="row">
-    <form method="post" action="/admin/scan"><button>Jetzt scannen</button></form>
-    <form method="post" action="/admin/initial"><button>Initial-Scan wiederholen</button></form>
-    <form method="post" action="/admin/backfill/plan"><button>Backfill (neu) planen</button></form>
-    <form method="post" action="/admin/backfill/reset"><button>Fehlgeschlagene Aufgaben wiederholen</button></form>
+    <form method="post" action="/admin/scan"><button>Jetzt aktualisieren</button></form>
     <form method="post" action="/admin/llm-test"><button>KI-Verbindung testen</button></form>
+    <form method="post" action="/admin/reclassify"><button {{ 'disabled' if st.reclassify_running }}>Bewertungen neu berechnen</button></form>
+  </div>
+  <p class="muted small">„Jetzt aktualisieren“ ruft sofort alle Quellen ab (sonst alle {{ groups['Zeitplan'][0].value }} h).
+    „Bewertungen neu berechnen“ wendet geänderte Bewertungsregeln auf alle vorhandenen Meldungen an.</p>
+</section>
+
+<section class="card" id="daten">
+  <h2>Daten &amp; Erfassungszeitraum</h2>
+  <dl class="facts">
+    <dt>Erfassungszeitraum</dt><dd>{{ period.since|d }} bis {{ period.until|d if period.until else 'laufend' }}
+      <span class="origin {{ period.origin }}">{{ 'Standard vom Erststart' if period.origin == 'default' else period.origin }}</span></dd>
+    <dt>Vorhandene Daten</dt><dd>{{ period.data_n }} Meldungen{% if period.data_n %}, {{ period.data_from|d }} bis {{ period.data_to|d }}{% endif %}</dd>
+    <dt>Historie-Abruf</dt><dd>{{ st.backfill.percent }} % erledigt ({{ st.backfill.done }} / {{ st.backfill.total }} Aufgaben) ·
+      {{ 'läuft' if backfill_enabled else 'angehalten' }}</dd>
+  </dl>
+
+  <div class="grid2">
+    <form method="post" action="/admin/data/period" class="stack panel">
+      <h3>Zeitraum ändern</h3>
+      <div class="row">
+        <label>von <input type="date" name="since" value="{{ period.since }}" required></label>
+        <label>bis <input type="date" name="until" value="{{ period.until }}"></label>
+      </div>
+      <p class="muted small">„bis“ leer lassen = laufend. Ein früheres „von“ plant den Abruf der zusätzlichen
+        Historie ein (läuft im Hintergrund, Fortschritt oben). Ein späteres „von“ stoppt offene Abrufe davor.</p>
+      <label class="inline"><input type="checkbox" name="purge"> vorhandene Daten außerhalb des Zeitraums löschen</label>
+      <button type="submit">Zeitraum übernehmen</button>
+    </form>
+
+    <div class="stack panel">
+      <h3>Aktualisierung steuern</h3>
+      <div class="row">
+        <form method="post" action="/admin/scan"><button>Jetzt aktualisieren</button></form>
+        <form method="post" action="/admin/backfill/toggle"><button>{{ 'Historie-Abruf anhalten' if backfill_enabled else 'Historie-Abruf fortsetzen' }}</button></form>
+      </div>
+      <div class="row">
+        <form method="post" action="/admin/backfill/plan"><button>Abrufe neu planen</button></form>
+        <form method="post" action="/admin/backfill/reset"><button>Fehlgeschlagene Abrufe wiederholen</button></form>
+        <form method="post" action="/admin/initial"><button>Initial-Scan wiederholen</button></form>
+      </div>
+      <p class="muted small">Neu planen ist nach Änderungen an Quellen nötig. Bereits erfasste Meldungen werden nie doppelt gespeichert.</p>
+    </div>
+
+    <form method="post" action="/admin/data/delete-range" class="stack panel"
+          onsubmit="return confirm('Meldungen dieses Zeitraums wirklich löschen?')">
+      <h3>Zeitraum löschen</h3>
+      <div class="row">
+        <label>von <input type="date" name="d_from"></label>
+        <label>bis <input type="date" name="d_to"></label>
+      </div>
+      <p class="muted small">Löscht Meldungen mit Erscheinungsdatum im Bereich (ein Feld leer = offen). Themen ohne
+        Meldungen entfallen. Liegt der Bereich im Erfassungszeitraum, können sie bei späteren Abrufen wiederkommen.</p>
+      <label class="inline"><input type="checkbox" name="confirm"> Ja, löschen</label>
+      <button type="submit" class="danger">Bereich löschen</button>
+    </form>
+
+    <form method="post" action="/admin/data/wipe" class="stack panel"
+          onsubmit="return confirm('Wirklich ALLE Daten löschen und neu initialisieren?')">
+      <h3>Neu initialisieren</h3>
+      <p class="muted small">Löscht alle Themen, Meldungen, Protokolle und Abrufaufgaben und startet einen neuen
+        Initial-Scan für den Erfassungszeitraum. Einstellungen und Quellen bleiben – außer bei Werkseinstellungen
+        (dann gilt auch wieder der Standard-Zeitraum der letzten vier Wochen; das Admin-Passwort bleibt).</p>
+      <label class="inline"><input type="checkbox" name="factory"> zusätzlich Werkseinstellungen herstellen</label>
+      <label><span>Zur Bestätigung <strong>LÖSCHEN</strong> eintippen</span> <input name="word" autocomplete="off" required></label>
+      <button type="submit" class="danger">Alles löschen &amp; neu starten</button>
+    </form>
   </div>
 </section>
 
@@ -56,9 +121,12 @@
         <div class="setting">
           <label for="f-{{ s.key }}">{{ s.label }} <span class="origin {{ it.origin }}">{{ it.origin }}</span></label>
           {% if s.type == 'bool' %}
+            <input type="hidden" name="__bools" value="{{ s.key }}">
             <input id="f-{{ s.key }}" type="checkbox" name="{{ s.key }}" {{ 'checked' if it.value }}>
           {% elif s.type == 'list' %}
             <textarea id="f-{{ s.key }}" name="{{ s.key }}" rows="6">{{ it.value }}</textarea>
+          {% elif s.type == 'text' %}
+            <textarea id="f-{{ s.key }}" name="{{ s.key }}" rows="{{ 14 if s.key == 'llm_instructions' else 5 }}" class="prompt">{{ it.value }}</textarea>
           {% elif s.type == 'choice' %}
             <select id="f-{{ s.key }}" name="{{ s.key }}">{% for c in s.choices %}<option {{ 'selected' if c == it.value }}>{{ c }}</option>{% endfor %}</select>
           {% elif s.type == 'secret' %}
