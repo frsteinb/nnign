@@ -5,7 +5,7 @@
 <article class="card">
   <div class="meta">
     <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
-    <span>bewertet durch: {{ {'lexikon': 'Regeln', 'llm': 'KI', 'manuell': 'Admin (manuell)'}.get(t.sentiment_origin, t.sentiment_origin) }}</span>
+    <span>bewertet durch: {{ {'lexikon': 'Regeln', 'llm': 'KI', 'manuell': 'Admin (manuell)', 'lernend': 'lernendes Modell', 'zeroshot': 'Zero-Shot-Modell'}.get(t.sentiment_origin, t.sentiment_origin) }}</span>
     {% if t.hidden %}<span class="badge">ausgeblendet</span>{% endif %}
   </div>
   <h1>{{ t.title }}</h1>
@@ -23,6 +23,14 @@
     {% endif %}
     {% if detail.llm %}
       <p><strong>KI-Begründung:</strong> {{ detail.llm }}{% if detail.confidence is not none %} <span class="muted">(Sicherheit {{ '%.0f'|format(detail.confidence * 100) }} %)</span>{% endif %}</p>
+    {% endif %}
+    {% if detail.zeroshot and t.sentiment_origin == 'zeroshot' %}
+      <p><strong>Zero-Shot-Klassifikation</strong> ({{ detail.zeroshot.model }}):
+        {% for k, v in detail.zeroshot.scores.items() %}{{ k }} {{ '%.0f'|format(v * 100) }} %{{ ', ' if not loop.last }}{% endfor %}</p>
+    {% endif %}
+    {% if detail.lernend and t.sentiment_origin == 'lernend' %}
+      <p><strong>Lernendes Modell:</strong> {{ detail.lernend.label }} (Sicherheit {{ '%.0f'|format(detail.lernend.confidence * 100) }} %);
+        die Regeln allein ergäben „{{ detail.lernend.regeln }}“. Das Modell lernt aus den Bewertungen des Admins und sicheren KI-Bewertungen.</p>
     {% endif %}
     {% if detail.hits %}
       <p class="small muted">Erkannte Signale (Gewicht; Titel zählt doppelt) – Summe positiv {{ detail.pos }}, negativ {{ detail.neg }}{% if detail.articles %} aus {{ detail.articles }} Meldung(en){% endif %}:</p>

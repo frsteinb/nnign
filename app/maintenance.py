@@ -21,14 +21,14 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import config, db, hubs, llm, sentiment, topics, translate
+from . import classify, config, db, hubs, llm, sentiment, topics, translate
 
 log = logging.getLogger(__name__)
 
 AUTO_REGROUP_SECONDS = 180      # Neu-Bündeln automatisch, wenn voraussichtlich kürzer
 AUTO_RERATE_FP = 30             # nach Prompt-/Modellwechsel automatisch nachbewerten, wenn so wenige Themen
 RECENT_DAYS = 30                # unbewertete Themen der letzten Tage bewertet die KI automatisch nach
-STATUS: dict = {"rerate": None, "last_check": None}
+STATUS: dict = {"rerate": None, "zeroshot": None, "last_check": None}
 
 
 def _h(*parts) -> str:
@@ -71,6 +71,8 @@ def bases() -> dict:
         "llm": llm.fingerprint() if llm.available() else "",
         "translate": translate.provider(),
         "hubs": hubs.VERSION,
+        "engine": _h(config.get("sentiment_engine"), config.get("learned_min_examples"),
+                     config.get("learned_min_accuracy"), config.get("learned_min_confidence")),
     }
 
 
@@ -238,6 +240,13 @@ def check(startup: bool = False) -> list[str]:
             notes.append(f"{len(changed)} neue oder geänderte Quelle(n) – aktueller Zeitraum wird nachgeholt")
         _accept("sources", cur["sources"])
 
+    # Bewertungsverfahren gewechselt -> Tonalität neu bestimmen (Regeln/lernend sofort, Zero-Shot/KI im Hintergrund)
+    if cur["engine"] != old.get("engine"):
+        if has_data:
+            config.state_set("pending_reclassify", True)
+            notes.append(f"Bewertungsverfahren: {config.get('sentiment_engine')} – Bewertungen werden neu bestimmt")
+        _accept("engine", cur["engine"])
+
     # Erkennung von Übersichtsseiten neu/verbessert -> gespeicherte Übersichten entfernen und auflösen
     if cur["hubs"] != old.get("hubs"):
         n = hub_cleanup() if has_data else 0
@@ -390,10 +399,11 @@ def _rerate_where(kind: str) -> tuple[str, tuple]:
     if kind == "grown":
         return (base + " AND t.sentiment_origin='llm' AND t.llm_rated_count>0 AND t.article_count>=2*t.llm_rated_count "
                 "AND t.article_count-t.llm_rated_count>=2", ())
+    auto = "t.sentiment_origin IN ('lexikon','lernend','zeroshot')"
     if kind == "recent":
-        return base + " AND t.sentiment_origin='lexikon' AND t.llm_rated_at='' AND t.last_published_at>=?", (recent,)
+        return base + f" AND {auto} AND t.llm_rated_at='' AND t.last_published_at>=?", (recent,)
     if kind == "old":
-        return base + " AND t.sentiment_origin='lexikon' AND t.llm_rated_at='' AND t.last_published_at<?", (recent,)
+        return base + f" AND {auto} AND t.llm_rated_at='' AND t.last_published_at<?", (recent,)
     if kind == "fp":
         return base + " AND t.sentiment_origin='llm' AND t.llm_fp!='' AND t.llm_fp!=?", (llm.fingerprint(),)
     raise ValueError(kind)
@@ -414,7 +424,7 @@ def rerate_kinds() -> list[str]:
 
 
 def rerate_open() -> int:
-    if not llm.available():
+    if not llm.available() or not classify.allowed("llm"):
         return 0
     return sum(_rerate_count(k) for k in rerate_kinds())
 
@@ -427,7 +437,7 @@ def _share_ok() -> bool:
 def rerate_batch(max_calls: int = 20) -> int:
     """Einige Themen von der KI (nach)bewerten – nur mit freiem Anteil am Tageslimit."""
     from . import pipeline
-    if not llm.available() or not config.get("llm_enabled"):
+    if not llm.available() or not config.get("llm_enabled") or not classify.allowed("llm"):
         return 0
     done = 0
     for kind in rerate_kinds():
@@ -478,9 +488,69 @@ def _apply_rating(t, res: dict) -> None:
         conn.execute("UPDATE articles SET llm_state='done' WHERE topic_id=? AND llm_state='pending'", (t["id"],))
 
 
+# ---------------------------------------------------------------------------------- Zero-Shot im Hintergrund
+
+def zeroshot_active() -> bool:
+    """Zero-Shot bewertet, wenn ausdrücklich gewählt – oder bei auto, solange keine KI eingerichtet ist."""
+    e = classify.engine()
+    return classify.zs_configured() and (e == "zeroshot" or (e == "auto" and not llm.available()))
+
+
+def _zs_where() -> tuple[str, tuple]:
+    return ("t.hidden=0 AND t.locked=0 AND (t.sentiment_origin IN ('lexikon','lernend') AND (t.zs_fp!=? OR "
+            "(t.zs_rated_count>0 AND t.article_count>=2*t.zs_rated_count AND t.article_count-t.zs_rated_count>=2)) "
+            "OR (t.sentiment_origin='zeroshot' AND (t.zs_fp!=? OR (t.article_count>=2*t.zs_rated_count AND "
+            "t.article_count-t.zs_rated_count>=2))))", (classify.zs_fingerprint(), classify.zs_fingerprint()))
+
+
+def zeroshot_open() -> int:
+    if not zeroshot_active():
+        return 0
+    where, params = _zs_where()
+    return db.query_one(f"SELECT COUNT(*) n FROM topics t WHERE {where}", params)["n"]
+
+
+def zeroshot_batch(max_calls: int = 30) -> int:
+    if not zeroshot_active():
+        return 0
+    where, params = _zs_where()
+    rows = db.query(f"SELECT t.* FROM topics t WHERE {where} ORDER BY t.last_published_at DESC LIMIT ?",
+                    (*params, max_calls))
+    done = 0
+    for t in rows:
+        if not classify.zs_ready():
+            break
+        STATUS["zeroshot"] = {"title": t["title"][:80]}
+        arts = db.query("SELECT title FROM articles WHERE topic_id=? ORDER BY published_at LIMIT 6", (t["id"],))
+        title, body = classify.topic_text(t, arts)
+        res = classify.predict_zeroshot(title, body)
+        if res is None:
+            continue
+        label, conf, scores = res
+        detail = json.loads(t["sentiment_detail"] or "{}")
+        detail["zeroshot"] = {"label": label, "scores": {k: round(v, 3) for k, v in scores.items()},
+                              "model": config.get("zeroshot_model")}
+        fields = {"zs_rated_count": t["article_count"], "zs_fp": classify.zs_fingerprint(),
+                  "sentiment_detail": json.dumps(detail, ensure_ascii=False)}
+        if conf >= float(config.get("zeroshot_min_confidence")):
+            fields.update(sentiment=label, sentiment_origin="zeroshot", updated_at=db.utcnow())
+        elif t["sentiment_origin"] == "zeroshot":
+            fields["sentiment_origin"] = "lexikon"       # unsicher geworden -> Regeln/lernend übernehmen
+        sets = ", ".join(f"{k}=?" for k in fields)
+        with db.tx() as conn:
+            conn.execute(f"UPDATE topics SET {sets} WHERE id=?", (*fields.values(), t["id"]))
+            if fields.get("sentiment_origin") == "lexikon":
+                topics.refresh(conn, t["id"])
+        done += 1
+    STATUS["zeroshot"] = None
+    if done:
+        log.info("Zero-Shot-Bewertung: %d Themen", done)
+    return done
+
+
 # ---------------------------------------------------------------------------------- Arbeit
 
-_last = {"check": 0.0, "translate": 0.0, "rerate": 0.0}
+_last = {"check": 0.0, "translate": 0.0, "rerate": 0.0, "zeroshot": 0.0, "train": 0.0}
 
 
 def work() -> None:
@@ -505,6 +575,15 @@ def work() -> None:
         _last["translate"] = now
         if pipeline.translate_pending():
             _last["translate"] = 0.0          # weiter, solange es etwas zu tun gibt
+    if now - _last["train"] > 600:
+        _last["train"] = now
+        was_ready = classify.learned_ready()
+        if classify.maybe_retrain() and classify.allowed("lernend") and (was_ready or classify.learned_ready()):
+            config.state_set("pending_reclassify", True)    # neues Modell auf bestehende Themen anwenden
+    if now - _last["zeroshot"] > 120 and zeroshot_active() and classify.zs_ready():
+        _last["zeroshot"] = now
+        if zeroshot_batch():
+            _last["zeroshot"] = 0.0
     if now - _last["rerate"] > 120 and llm.ready():
         _last["rerate"] = now
         if rerate_batch():

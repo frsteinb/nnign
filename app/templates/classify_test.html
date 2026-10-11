@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Bewertungsverfahren vergleichen – nnign{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Bewertungsverfahren im Vergleich</h1>
+  <p><strong>{{ title }}</strong>{% if body %}<br><span class="muted">{{ body }}</span>{% endif %}</p>
+  <div class="scroll"><table class="list">
+    <thead><tr><th>Verfahren</th><th>Ergebnis</th><th>Sicherheit</th><th>Details</th></tr></thead>
+    <tbody>{% for r in results %}
+      <tr><td>{{ names[r.engine] }}</td>
+        <td>{% if r.label %}<span class="badge {{ r.label }}">{{ symbol[r.label] }} {{ r.label }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td>{{ ('%.0f'|format(r.confidence * 100) ~ ' %') if r.confidence is not none else '–' }}</td>
+        <td class="small">{{ r.detail }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <p><a href="/admin#bewertung">Zurück zum Admin-Bereich</a></p>
+</section>
+{% endblock %}

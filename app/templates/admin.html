@@ -40,6 +40,33 @@
     „Themen neu bündeln“ ordnet alle Meldungen automatisch gebildeter Themen neu zu, z. B. nach geänderter Ähnlichkeitsschwelle.</p>
 </section>
 
+<section class="card" id="bewertung">
+  <h2>Bewertungsverfahren</h2>
+  <p class="muted small">Gewählt: <strong>{{ engines.choice }}</strong> (ändern unter <a href="#einstellungen">Einstellungen → Bewertungsverfahren</a>).
+    Bei „auto“ bestimmt das beste verfügbare Verfahren die Tonalität: KI, sonst Zero-Shot, sonst lernendes Modell, sonst Regeln.
+    {{ engines.manual }} Themen sind vom Admin bewertet und bleiben unverändert.</p>
+  <div class="scroll"><table class="list">
+    <thead><tr><th>Verfahren</th><th>Status</th><th>Themen</th><th>Kosten</th></tr></thead>
+    <tbody>{% for e in engines.rows %}
+      <tr class="{{ '' if e.allowed else 'muted' }}"><td><strong>{{ e.name }}</strong>{% if not e.allowed %} <span class="badge">nicht gewählt</span>{% endif %}</td>
+        <td class="small">{{ e.status }}{% if e.open %}<br>{{ e.open }} Themen warten auf Bewertung{% endif %}</td>
+        <td>{{ e.n }}</td><td class="small">{{ e.cost }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <div class="row">
+    <form method="post" action="/admin/learned-train"><button>Lernendes Modell jetzt trainieren</button></form>
+    <form method="post" action="/admin/zeroshot-test"><button>Zero-Shot testen</button></form>
+  </div>
+  <details><summary>Verfahren mit eigenem Text vergleichen</summary>
+    <form method="post" action="/admin/classify-test" class="stack">
+      <label>Titel <input name="title" required placeholder="z. B. Porsche senkt erneut die Renditeprognose"></label>
+      <label>Teaser (optional) <textarea name="body" rows="2"></textarea></label>
+      <button>Vergleichen</button>
+      <p class="muted small">Zero-Shot und KI verbrauchen dabei je einen Aufruf.</p>
+    </form>
+  </details>
+</section>
+
 <section class="card" id="daten">
   <h2>Daten &amp; Erfassungszeitraum</h2>
   <dl class="facts">

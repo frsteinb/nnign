@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-from . import config, db, fetcher, hubs, llm, sentiment, topics, translate
+from . import classify, config, db, fetcher, hubs, llm, sentiment, topics, translate
 from .fetcher import FetchError, Item
 from .relevance import Matcher
 from .sources import all_sources, feeds_of
@@ -194,6 +194,12 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                     elif res["match_topic_id"] and conn.execute(
                             "SELECT 1 FROM topics WHERE id=?", (res["match_topic_id"],)).fetchone():
                         topic_id = res["match_topic_id"]
+                    elif not classify.allowed("llm"):      # KI nur für Titel/Zuordnung, Tonalität per Verfahren
+                        topic_id = topics.create_topic(
+                            conn, res["topic_title"].strip() or it.title, res["abstract"].strip(),
+                            sentiment.label_for(senti), art_score, "lexikon", pub, vec, art_detail)
+                        conn.execute("UPDATE topics SET title_fixed=1 WHERE id=?", (topic_id,))   # KI-Titel behalten
+                        ctx.new_topics += 1
                     else:
                         topic_id = topics.create_topic(
                             conn, res["topic_title"].strip() or it.title, res["abstract"].strip(),
@@ -355,7 +361,8 @@ def reclassify() -> dict:
                         conn.execute("UPDATE articles SET sentiment_score=?, sentiment_detail=? WHERE id=?",
                                      (r.score, json.dumps(r.detail(), ensure_ascii=False), a["id"]))
                         n_art += 1
-            ids = [r["id"] for r in db.query("SELECT id FROM topics WHERE locked=0 AND sentiment_origin='lexikon'")]
+            ids = [r["id"] for r in db.query("SELECT id FROM topics WHERE locked=0 AND "
+                                             "sentiment_origin IN ('lexikon', 'lernend')")]
             for i in range(0, len(ids), 500):
                 with db.tx() as conn:
                     for tid in ids[i:i + 500]:

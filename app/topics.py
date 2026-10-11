@@ -6,7 +6,11 @@ import math
 from collections import Counter
 from datetime import datetime, timedelta
 
+import logging
+
 from . import db, features, sentiment
+
+log = logging.getLogger(__name__)
 from .textutil import shorten
 
 SIG_SIZE = 80
@@ -188,6 +192,22 @@ def attach(conn, topic_id: int, vec: Counter, published: str) -> None:
     conn.execute("UPDATE topics SET signature=?, updated_at=? WHERE id=?", (json.dumps(sig), db.utcnow(), topic_id))
 
 
+def _learned_label(t, arts):
+    """Vorhersage des lernenden Modells, falls es verwendet werden darf und sicher genug ist."""
+    from . import classify, config
+    try:
+        if not (classify.allowed("lernend") and classify.learned_ready()):
+            return None
+        title, body = classify.topic_text(t, arts)
+        pred = classify.predict_learned(title, body)
+    except Exception:  # Modell nie zum Stolperstein werden lassen
+        log.exception("Lernendes Modell fehlgeschlagen")
+        return None
+    if pred and pred[1] >= float(config.get("learned_min_confidence")):
+        return pred
+    return None
+
+
 def refresh(conn, topic_id: int) -> None:
     """Abgeleitete Felder eines Themas aus seinen Meldungen neu berechnen."""
     t = conn.execute("SELECT * FROM topics WHERE id=?", (topic_id,)).fetchone()
@@ -203,10 +223,16 @@ def refresh(conn, topic_id: int) -> None:
         "first_published_at": arts[0]["published_at"],
         "last_published_at": arts[-1]["published_at"],
     }
-    if not t["locked"] and t["sentiment_origin"] == "lexikon":
+    if not t["locked"] and t["sentiment_origin"] in ("lexikon", "lernend"):
         label, score, detail = aggregate_sentiment([json.loads(a["sentiment_detail"] or "{}") for a in arts])
+        origin = "lexikon"
+        learned = _learned_label(t, arts)
+        if learned:
+            detail["lernend"] = {"label": learned[0], "confidence": round(learned[1], 3), "regeln": label}
+            label, origin = learned[0], "lernend"
         fields["sentiment"] = label
         fields["sentiment_score"] = score
+        fields["sentiment_origin"] = origin
         fields["sentiment_detail"] = json.dumps(detail, ensure_ascii=False)
         if not t["title_fixed"]:
             fields["title"] = arts[0]["title"]

@@ -25,7 +25,7 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
     <li><a href="#relevanz">Relevanz: Betrifft es den VW-Konzern?</a></li>
     <li><a href="#themen">Themenbildung</a></li>
     <li><a href="#sprachen">Fremdsprachige Quellen und Übersetzung</a></li>
-    <li><a href="#bewertung">Bewertung positiv / neutral / negativ</a> – mit <a href="#annahmen">Kriterien und Annahmen</a></li>
+    <li><a href="#bewertung">Bewertung positiv / neutral / negativ</a> – mit <a href="#verfahren">Verfahren</a> und <a href="#annahmen">Kriterien und Annahmen</a></li>
     <li><a href="#ki">KI-Analyse und Prompt</a></li>
     <li><a href="#statistik">Statistik</a></li>
     <li><a href="#daten">Datenverwaltung im Admin-Bereich</a> – mit <a href="#selbstpflege">Selbstpflege</a></li>
@@ -214,6 +214,31 @@ deutschen; mit Übersetzer oder KI ist die Bewertung verlässlicher.</p>
     rein sachliche Meldung, zu schwache Signale oder ausgeglichen gemischte Signale.</td></tr>
   </tbody>
 </table>
+
+<h3 id="verfahren">Bewertungsverfahren: Regeln, lernendes Modell, Zero-Shot, KI</h3>
+<p>Die Tonalität eines Themas kann auf vier Arten bestimmt werden. Welche gilt, stellt der Admin unter
+<a href="/admin#bewertung">Admin → Bewertungsverfahren</a> ein; „auto“ nimmt das beste verfügbare. Von Hand gesetzte
+Bewertungen haben immer Vorrang. Die Themenseite zeigt, welches Verfahren entschieden hat und warum.</p>
+<table><thead><tr><th>Verfahren</th><th>Wie</th><th>Stärken</th><th>Schwächen</th><th>Kosten</th></tr></thead><tbody>
+  <tr><td>KI (Sprachmodell)</td><td>liest Titel und Teaser, begründet die Einordnung (siehe <a href="#ki">KI-Analyse</a>)</td>
+    <td>versteht Zusammenhänge, Ironie, „aus Sicht von VW“; formuliert auch Titel und Abstract</td>
+    <td>langsamer, Limits, Ergebnis kann leicht schwanken</td><td>Gemini/Groq kostenlos, Ollama lokal, sonst je Aufruf</td></tr>
+  <tr><td>Zero-Shot-Klassifikation</td><td>ein Entscheidungsmodell (NLI) prüft, wie gut Aussagen wie „{{ cfg('zeroshot_hypothesis').replace('{}', 'gut') }}“
+    zum Text passen</td><td>schnell, reproduzierbar, kein Training, mehrsprachig</td>
+    <td>kennt den Konzernblick nur über die Hypothese; feine Unterschiede (z. B. „nur befriedigend“) schwächer</td>
+    <td>kostenloses Kontingent bei Hugging Face (Token in <code>.env</code>: <code>HF_TOKEN</code>)</td></tr>
+  <tr><td>Lernendes Modell</td><td>nnign trainiert selbst ein Modell (Naive Bayes) aus den Bewertungen des Admins (dreifach
+    gewichtet) und sicheren KI-Bewertungen; die Genauigkeit wird per Kreuzvalidierung gemessen</td>
+    <td>kostenlos, offline, sehr schnell; wird mit jeder Korrektur besser; übernimmt z. B. den Historie-Abruf</td>
+    <td>braucht Beispiele (mind. {{ cfg('learned_min_examples') }}); erkennt nur, was es schon gesehen hat</td><td>kostenlos</td></tr>
+  <tr><td>Regeln</td><td>Kategorien und Kennzahl + Richtung (unten)</td><td>transparent, sofort</td>
+    <td>übersieht ungewöhnliche Formulierungen</td><td>kostenlos</td></tr>
+</tbody></table>
+<p>Empfehlung: KI mit einem kostenlosen Anbieter für neue Meldungen; das lernende Modell lernt daraus mit und deckt
+ältere Meldungen ab. Ohne KI ist Zero-Shot die beste kostenlose Wahl. Zero-Shot und lernendes Modell bewerten das
+Thema als Ganzes (Titel, Abstract und die ersten Meldungen); ihre Ergebnisse werden nur übernommen, wenn sie sicher
+genug sind, sonst gelten die Regeln. Ergebnisse verschiedener Verfahren lassen sich im Admin-Bereich mit eigenen Texten
+vergleichen.</p>
 
 <h3 id="annahmen">Bedeutung der Kriterien und die gewählten Annahmen</h3>
 <p>„Positiv“ und „negativ“ sind hier keine Urteile über Gut und Böse und auch keine Aussage darüber, ob eine

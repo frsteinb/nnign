@@ -121,6 +121,17 @@ Quellen: 16 deutschsprachige Medien (u. a. tagesschau, SPIEGEL, ZEIT, FAZ, SZ, H
 Braunschweiger Zeitung) und 5 englischsprachige (Reuters, Bloomberg, Automotive News, Caixin Global,
 CnEVPost). Weitere – auch chinesischsprachige – lassen sich im Admin-Bereich mit ihrer Sprache anlegen.
 
+## Bewertungsverfahren
+
+Die Tonalität (positiv/neutral/negativ) bestimmt wahlweise (Admin → Bewertungsverfahren, „auto“ = bestes verfügbares):
+
+| Verfahren | Kosten | Einrichtung |
+|---|---|---|
+| KI-Sprachmodell (Gemini, Groq, Mistral, Claude, Ollama …) | Gemini/Groq kostenlos, Ollama lokal | Anbieter/Modell im Web-UI, Key in `.env` |
+| Zero-Shot-Klassifikation (Entscheidungsmodell, Hugging Face) | kostenloses Kontingent | `HF_TOKEN` in `.env` |
+| Lernendes Modell (trainiert aus Admin- und KI-Bewertungen) | kostenlos, offline | nichts – lernt automatisch |
+| Regeln | kostenlos | – |
+
 ## Fremdsprachige Meldungen
 
 Angezeigt wird alles auf Deutsch. Englische und chinesische Titel/Teaser werden beim Speichern übersetzt,

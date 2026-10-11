@@ -21,14 +21,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, db, llm, maintenance, pipeline, prompts, sentiment, sources, topics, translate
+from . import auth, classify, config, db, llm, maintenance, pipeline, prompts, sentiment, sources, topics, translate
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -407,6 +407,10 @@ def activity() -> list[dict]:
             out.append({"kind": "wait", "title": "KI-Nachbewertung wartet",
                         "phase": "Anteil des Tageslimits für Nachbewertungen ausgeschöpft – weiter ab Mitternacht (UTC)",
                         "detail": f"{open_n} Themen offen", "pct": None})
+    zs = maintenance.STATUS.get("zeroshot")
+    if zs:
+        out.append({"kind": "rerate", "title": "Zero-Shot-Bewertung", "phase": f"„{zs['title']}“",
+                    "detail": f"noch {maintenance.zeroshot_open()} Themen", "pct": None})
     if st.get("translate"):
         out.append({"kind": "translate", "title": "Nachübersetzung",
                     "phase": f"{st['translate']['n']} fremdsprachige Meldungen", "detail": "", "pct": None})
@@ -667,6 +671,7 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
         "sessions": [{**dict(r), "device": auth.describe_agent(r["user_agent"])} for r in auth.sessions()],
         "current_session": (auth.current_session(request) or {"id": None})["id"],
         "session_days": auth.LIFETIME_DAYS, "session_max": auth.MAX_SESSIONS,
+        "engines": engines_info(),
     })
 
 
@@ -851,6 +856,48 @@ def _back_to(request: Request, msg: str) -> RedirectResponse:
     if urlsplit(ref).path == "/":
         return RedirectResponse("/?" + urlencode({"msg": msg}), status_code=303)
     return back(msg)
+
+
+def engines_info() -> dict:
+    counts = {r["o"]: r["n"] for r in db.query(
+        "SELECT sentiment_origin o, COUNT(*) n FROM topics WHERE hidden=0 GROUP BY sentiment_origin")}
+    return {
+        "choice": config.get("sentiment_engine"),
+        "rows": [
+            {"key": "llm", "name": classify.NAMES["llm"], "status": llm.describe() + (
+                f" – {llm.blocked_reason()}" if llm.blocked_reason() else ""), "n": counts.get("llm", 0),
+             "allowed": classify.allowed("llm"), "cost": "je nach Anbieter (Gemini/Groq kostenlos, Ollama lokal)"},
+            {"key": "zeroshot", "name": classify.NAMES["zeroshot"], "status": classify.zs_status(),
+             "n": counts.get("zeroshot", 0), "allowed": classify.allowed("zeroshot"),
+             "cost": "kostenloses Kontingent bei Hugging Face", "open": maintenance.zeroshot_open()},
+            {"key": "lernend", "name": classify.NAMES["lernend"], "status": classify.learned_status(),
+             "n": counts.get("lernend", 0), "allowed": classify.allowed("lernend"), "cost": "kostenlos, offline"},
+            {"key": "regeln", "name": classify.NAMES["regeln"], "status": "immer aktiv (Rückfall)",
+             "n": counts.get("lexikon", 0), "allowed": True, "cost": "kostenlos, offline"},
+        ],
+        "manual": counts.get("manuell", 0),
+    }
+
+
+@app.post("/admin/learned-train")
+def admin_learned_train(_=Depends(require_admin)):
+    info = classify.train()
+    if classify.allowed("lernend"):
+        config.state_set("pending_reclassify", True)
+    acc = f"{info['accuracy'] * 100:.0f} %" if info["accuracy"] is not None else "– (zu wenige Beispiele)"
+    return back(f"Lernendes Modell trainiert: {info['n']} Beispiele, Genauigkeit {acc}", "bewertung")
+
+
+@app.post("/admin/zeroshot-test")
+def admin_zeroshot_test(_=Depends(require_admin)):
+    return back("Zero-Shot-Test: " + classify.test_zeroshot(), "bewertung")
+
+
+@app.post("/admin/classify-test", response_class=HTMLResponse)
+def admin_classify_test(request: Request, title: str = Form(...), body: str = Form(""), _=Depends(require_admin)):
+    results = classify.compare(title.strip(), body.strip())
+    return templates.TemplateResponse(request, "classify_test.html", {
+        "title": title, "body": body, "results": results, "names": classify.NAMES})
 
 
 @app.post("/admin/regroup")

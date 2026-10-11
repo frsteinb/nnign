@@ -186,6 +186,35 @@ SETTINGS: list[Setting] = [
             "Meldungen werden nur Themen zugeordnet, deren erste Meldung höchstens so lange zurückliegt. Verhindert, "
             "dass fortlaufende Berichterstattung über Wochen zu einem Riesen-Thema zusammenwächst.", "Themen"),
     Setting("max_sources_per_topic", "int", 5, "Max. angezeigte Quellen je Thema", "", "Themen"),
+    # --- Bewertungsverfahren
+    Setting("sentiment_engine", "choice", "auto", "Bewertungsverfahren für die Tonalität",
+            "auto = bestes verfügbares: KI (Sprachmodell), sonst Zero-Shot-Klassifikation, sonst lernendes Modell, "
+            "sonst Regeln. Ein festes Verfahren nutzt nur dieses (Regeln immer als Rückfall). Manuelle Bewertungen "
+            "haben stets Vorrang.", "Bewertungsverfahren", ["auto", "llm", "zeroshot", "lernend", "regeln"]),
+    Setting("learned_min_examples", "int", 40, "Lernendes Modell: Mindestzahl Beispiele",
+            "Gelernt wird aus manuellen Bewertungen (zählen dreifach) und sicheren KI-Bewertungen.",
+            "Bewertungsverfahren"),
+    Setting("learned_min_accuracy", "float", 0.65, "Lernendes Modell: Mindestgenauigkeit",
+            "Per Kreuzvalidierung gemessen (0..1). Darunter wird das Modell nicht verwendet.", "Bewertungsverfahren"),
+    Setting("learned_min_confidence", "float", 0.7, "Lernendes Modell: Mindestsicherheit je Thema",
+            "Unsicherere Vorhersagen werden verworfen, dann gelten die Regeln.", "Bewertungsverfahren"),
+    Setting("zeroshot_model", "str", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
+            "Zero-Shot: Modell",
+            "Mehrsprachiges NLI-Modell auf Hugging Face (Deutsch, Englisch, Chinesisch). Alternativen z. B. "
+            "MoritzLaurer/bge-m3-zeroshot-v2.0 oder facebook/bart-large-mnli (nur Englisch).", "Bewertungsverfahren"),
+    Setting("zeroshot_url", "str", "https://router.huggingface.co/hf-inference/models/{model}", "Zero-Shot: Adresse",
+            "Hugging-Face-Inference-API ({model} wird ersetzt) oder ein eigener kompatibler Server.",
+            "Bewertungsverfahren"),
+    Setting("zeroshot_hypothesis", "str", "Diese Nachricht ist {} für den Volkswagen-Konzern.",
+            "Zero-Shot: Hypothese", "{} wird durch die Formulierungen unten ersetzt.", "Bewertungsverfahren"),
+    Setting("zeroshot_labels", "list", ["positiv = gut", "neutral = weder gut noch schlecht", "negativ = schlecht"],
+            "Zero-Shot: Formulierungen je Klasse", "Eine Zeile je Klasse: klasse = Formulierung.", "Bewertungsverfahren"),
+    Setting("zeroshot_min_confidence", "float", 0.55, "Zero-Shot: Mindestsicherheit",
+            "Unsicherere Ergebnisse werden verworfen (0..1).", "Bewertungsverfahren"),
+    Setting("zeroshot_max_calls_per_day", "int", 1000, "Zero-Shot: max. Aufrufe pro Tag",
+            "Schont das kostenlose Kontingent; danach geht es am nächsten Tag weiter.", "Bewertungsverfahren"),
+    Setting("hf_token", "secret", "", "Hugging-Face-Token",
+            "Kostenlos unter huggingface.co/settings/tokens.", "Bewertungsverfahren", env=["HF_TOKEN", "HUGGINGFACE_API_KEY"]),
     # --- Bewertung
     Setting("sentiment_neutral_margin", "float", 1.5, "Neutral-Marge",
             "Ist der Saldo aus positiven und negativen Signalen kleiner als dieser Wert, gilt die Meldung als "
