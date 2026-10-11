@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Anmelden – nnign{% endblock %}
+{% block content %}
+<section class="card login">
+  <h1>Admin-Anmeldung</h1>
+  {% if error %}<div class="flash warn">{{ error }}</div>{% endif %}
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" value="{{ next }}">
+    <input type="text" name="username" value="admin" autocomplete="username" hidden>
+    <label>Passwort <input type="password" name="password" required autofocus autocomplete="current-password"></label>
+    <button type="submit">Anmelden</button>
+  </form>
+  <p class="muted small">Die Anmeldung bleibt auf diesem Gerät {{ days }} Tage ab der letzten Nutzung erhalten
+    (höchstens {{ max }} Geräte gleichzeitig). Abmelden über „Abmelden“ oben.</p>
+</section>
+{% endblock %}

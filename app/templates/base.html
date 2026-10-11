@@ -15,6 +15,7 @@
     <a href="/doku">Doku</a>
     <a href="/docs">API</a>
     <a href="/admin">Admin</a>
+    {% if is_admin(request) %}<form method="post" action="/logout" class="inline-form"><button class="link navlink" title="Admin-Anmeldung auf diesem Gerät beenden">Abmelden</button></form>{% endif %}
   </nav>
 </header>
 <main>

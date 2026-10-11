@@ -248,3 +248,8 @@ body:has(.mergebar:not([hidden])) .to-top { bottom: 92px; }
 body:has(.mergebar:not([hidden])) main { padding-bottom: 110px; }
 @media (max-width: 600px) { body:has(.mergebar:not([hidden])) .to-top { bottom: 150px; }
   body:has(.mergebar:not([hidden])) main { padding-bottom: 160px; } }
+
+/* Anmeldung */
+.login { max-width: 420px; margin: 32px auto; }
+.inline-form { display: inline; margin: 0; }
+button.navlink { font-size: inherit; text-decoration: none; color: inherit; }

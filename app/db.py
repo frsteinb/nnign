@@ -118,6 +118,15 @@ CREATE TABLE IF NOT EXISTS runs (
     llm_calls    INTEGER NOT NULL DEFAULT 0,
     log          TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash  TEXT NOT NULL UNIQUE,
+    created_at  TEXT NOT NULL,
+    last_seen   TEXT NOT NULL,
+    user_agent  TEXT NOT NULL DEFAULT '',
+    ip          TEXT NOT NULL DEFAULT ''
+);
 """
 
 

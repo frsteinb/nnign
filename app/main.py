@@ -18,11 +18,10 @@ from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, db, llm, pipeline, prompts, sentiment, sources, topics, translate
+from . import auth, config, db, llm, pipeline, prompts, sentiment, sources, topics, translate
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -72,50 +71,45 @@ def check_password(pw: str) -> bool:
     return bool(stored) and hmac.compare_digest(_hash(pw, stored["salt"]), stored["hash"])
 
 
-security = HTTPBasic(realm="nnign Admin")
+class LoginRequired(Exception):
+    """Nicht angemeldet: Browser werden zum Anmeldeformular geleitet, Skripte bekommen 401."""
 
 
-def require_admin(request: Request, creds: HTTPBasicCredentials = Depends(security)) -> str:
-    ok_user = hmac.compare_digest(creds.username.encode(), b"admin")
-    if not (ok_user and check_password(creds.password)):
-        raise HTTPException(401, "Anmeldung erforderlich", headers={"WWW-Authenticate": "Basic"})
-    if request.method == "POST":  # einfacher CSRF-Schutz
+def _wants_html(request: Request) -> bool:
+    return request.method == "GET" and "text/html" in request.headers.get("accept", "")
+
+
+def is_admin(request: Request) -> bool:
+    return auth.is_admin(request, check_password)
+
+
+def _check_origin(request: Request) -> None:
+    if request.method == "POST":  # einfacher CSRF-Schutz (zusätzlich zu SameSite-Cookies)
         origin = request.headers.get("origin") or request.headers.get("referer")
         allowed = {request.headers.get("host"), request.headers.get("x-forwarded-host")}
         if origin and urlsplit(origin).netloc not in allowed:
             raise HTTPException(403, "Ungültige Herkunft der Anfrage")
-    return creds.username
+
+
+def require_admin(request: Request) -> str:
+    if not is_admin(request):
+        raise LoginRequired()
+    _check_origin(request)
+    return "admin"
 
 
 def _select_mode(request: Request) -> bool:
     """Auswahlmodus der Startseite (?auswahl=1) – nur für den Admin; fordert sonst die Anmeldung an."""
     if request.query_params.get("auswahl") != "1":
         return False
-    import base64
-    try:
-        auth = request.headers.get("authorization", "")
-        user, _, pw = base64.b64decode(auth[6:]).decode().partition(":") if auth.lower().startswith("basic ") \
-            else ("", "", "")
-    except Exception:
-        user, pw = "", ""
-    if user != "admin" or not check_password(pw):
-        raise HTTPException(401, "Anmeldung erforderlich", headers={"WWW-Authenticate": 'Basic realm="nnign Admin"'})
+    if not is_admin(request):
+        raise LoginRequired()
     return True
 
 
 def maybe_public(request: Request) -> None:
-    if not config.get("public_dashboard"):
-        creds = None
-        try:
-            import base64
-            auth = request.headers.get("authorization", "")
-            if auth.lower().startswith("basic "):
-                user, _, pw = base64.b64decode(auth[6:]).decode().partition(":")
-                creds = (user, pw)
-        except Exception:
-            creds = None
-        if not creds or creds[0] != "admin" or not check_password(creds[1]):
-            raise HTTPException(401, "Anmeldung erforderlich", headers={"WWW-Authenticate": "Basic"})
+    if not config.get("public_dashboard") and not is_admin(request):
+        raise LoginRequired()
 
 
 # ====================================================================== App
@@ -154,6 +148,7 @@ def fmt_dt(value, fmt="%d.%m.%Y %H:%M"):
 templates.env.filters["dt"] = fmt_dt
 templates.env.filters["d"] = lambda v: fmt_dt(v, "%d.%m.%Y")
 templates.env.globals["version"] = VERSION
+templates.env.globals["is_admin"] = lambda request: is_admin(request)
 templates.env.globals["symbol"] = {"positiv": "▲", "neutral": "●", "negativ": "▼"}
 templates.env.globals["languages"] = sources.LANGUAGES
 templates.env.globals["lang_short"] = {"en": "EN", "zh": "ZH"}
@@ -627,6 +622,9 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
                    "origin": config.source_of("collect_since"), "data_from": span["a"], "data_to": span["b"],
                    "data_n": span["n"]},
         "backfill_enabled": config.get("backfill_enabled"),
+        "sessions": [{**dict(r), "device": auth.describe_agent(r["user_agent"])} for r in auth.sessions()],
+        "current_session": (auth.current_session(request) or {"id": None})["id"],
+        "session_days": auth.LIFETIME_DAYS, "session_max": auth.MAX_SESSIONS,
     })
 
 
@@ -821,11 +819,12 @@ def admin_translate_pending(_=Depends(require_admin)):
 
 
 @app.post("/admin/password")
-def admin_password(new: str = Form(...), _=Depends(require_admin)):
+def admin_password(request: Request, new: str = Form(...), _=Depends(require_admin)):
     if len(new) < 8:
         return back("Passwort muss mindestens 8 Zeichen haben")
     set_admin_password(new)
-    return back("Passwort geändert – bitte neu anmelden")
+    n = auth.revoke_others(request)    # andere Geräte müssen sich neu anmelden
+    return back("Passwort geändert" + (f" – {n} andere Geräte abgemeldet" if n else ""))
 
 
 @app.get("/admin/runs/{run_id}", response_class=HTMLResponse)
@@ -889,6 +888,68 @@ async def admin_topics_merge(request: Request, _=Depends(require_admin)):
 def admin_article_detach(article_id: int, _=Depends(require_admin)):
     new_id = topics.detach_article(article_id)
     return RedirectResponse(f"/thema/{new_id}" if new_id else "/", status_code=303)
+
+
+@app.exception_handler(LoginRequired)
+async def login_required(request: Request, exc: LoginRequired):
+    if _wants_html(request):
+        nxt = request.url.path + (("?" + request.url.query) if request.url.query else "")
+        return RedirectResponse("/login?" + urlencode({"next": nxt}), status_code=303)
+    return JSONResponse({"detail": "Anmeldung erforderlich"}, status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="nnign Admin"'})
+
+
+def _safe_next(nxt: str) -> str:
+    return nxt if nxt.startswith("/") and not nxt.startswith("//") else "/admin"
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/admin", error: str = ""):  # noqa: A002
+    if is_admin(request):
+        return RedirectResponse(_safe_next(next), status_code=303)
+    return templates.TemplateResponse(request, "login.html", {"next": _safe_next(next), "error": error,
+                                                              "days": auth.LIFETIME_DAYS, "max": auth.MAX_SESSIONS})
+
+
+@app.post("/login")
+def login_submit(request: Request, password: str = Form(""), next: str = Form("/admin")):  # noqa: A002
+    _check_origin(request)
+    ip = auth.client_ip(request)
+    nxt = _safe_next(next)
+    if auth.locked(ip):
+        return RedirectResponse("/login?" + urlencode({"next": nxt, "error": "Zu viele Fehlversuche – bitte in "
+                                                       "einigen Minuten erneut versuchen."}), status_code=303)
+    if not check_password(password):
+        auth.note_failure(ip)
+        time.sleep(0.5)
+        return RedirectResponse("/login?" + urlencode({"next": nxt, "error": "Passwort falsch."}), status_code=303)
+    token = auth.create_session(request)
+    resp = RedirectResponse(nxt, status_code=303)
+    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    resp.set_cookie(auth.COOKIE, token, max_age=auth.LIFETIME_DAYS * 86400, httponly=True, samesite="lax",
+                    secure=secure, path="/")
+    return resp
+
+
+@app.post("/logout")
+def logout(request: Request):
+    _check_origin(request)
+    auth.logout(request)
+    resp = RedirectResponse("/", status_code=303)
+    resp.delete_cookie(auth.COOKIE, path="/")
+    return resp
+
+
+@app.post("/admin/sessions/{sid}/revoke")
+def admin_session_revoke(sid: int, _=Depends(require_admin)):
+    auth.revoke(sid)
+    return back("Gerät abgemeldet", "geraete")
+
+
+@app.post("/admin/sessions/revoke-others")
+def admin_sessions_revoke_others(request: Request, _=Depends(require_admin)):
+    n = auth.revoke_others(request)
+    return back(f"{n} andere Geräte abgemeldet", "geraete")
 
 
 @app.exception_handler(HTTPException)

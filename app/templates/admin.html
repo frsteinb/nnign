@@ -187,6 +187,23 @@
   </table></div>
 </section>
 
+<section class="card" id="geraete">
+  <h2>Angemeldete Geräte</h2>
+  <p class="muted small">Eine Anmeldung gilt {{ session_days }} Tage ab der letzten Nutzung, auf höchstens {{ session_max }} Geräten gleichzeitig;
+    bei einer weiteren Anmeldung endet die am längsten unbenutzte. Skripte können weiterhin HTTP-Basic-Auth verwenden.</p>
+  {% if sessions %}
+  <div class="scroll"><table class="list">
+    <thead><tr><th>Gerät</th><th>angemeldet</th><th>zuletzt aktiv</th><th>IP</th><th></th></tr></thead>
+    <tbody>{% for x in sessions %}
+      <tr><td>{{ x.device }}{% if x.id == current_session %} <span class="badge">dieses Gerät</span>{% endif %}</td>
+        <td>{{ x.created_at|dt }}</td><td>{{ x.last_seen|dt }}</td><td class="muted small">{{ x.ip }}</td>
+        <td><form method="post" action="/admin/sessions/{{ x.id }}/revoke"><button class="link">abmelden</button></form></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if sessions|length > 1 %}<form method="post" action="/admin/sessions/revoke-others"><button>Alle anderen Geräte abmelden</button></form>{% endif %}
+  {% else %}<p class="small">Keine Browser-Anmeldung aktiv (Zugriff per Basic-Auth).</p>{% endif %}
+</section>
+
 <section class="card">
   <h2>Admin-Passwort ändern</h2>
   <form method="post" action="/admin/password" class="row">
