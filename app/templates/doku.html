@@ -83,6 +83,11 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
     Suchfenstern von {{ cfg('backfill_search_window_days') }} Tagen und Internet-Archive-Schnappschüssen. Die Reihenfolge
     ist <em>grob nach fein</em>: erst jede 32. Periode über den ganzen Zeitraum, dann immer dichter. Ein Überblick über
     alle Jahre entsteht also früh. Jede Aufgabe wird in der Datenbank abgehakt; Neustarts schaden nicht.</li>
+  <li><strong>Live-Anzeige:</strong> Läuft gerade ein Scan, der Historie-Abruf, eine Neu-Bewertung oder eine
+    Nachübersetzung, zeigt die Startseite oben „Läuft gerade“ mit Fortschrittsbalken, aktueller Phase und – beim
+    Historie-Abruf – geschätzter Restzeit. Die Anzeige aktualisiert sich alle paar Sekunden von selbst; kommen neue
+    Themen hinzu, erscheint ein Hinweis zum Anzeigen. In Ruhe stehen dort stattdessen letzter und nächster Scan.
+    Die Themenliste lädt beim Scrollen automatisch weiter.</li>
   <li><strong>Nach einem Update des Images</strong> gleicht nnign beim Neustart den Datenbestand automatisch ab:
     neue Standardquellen werden angelegt, für sie wird der aktuelle Zeitraum wie beim Initial-Scan nachgeholt und die
     Historie des Erfassungszeitraums eingeplant. Standardquellen, die der Admin nicht verändert hat, übernehmen

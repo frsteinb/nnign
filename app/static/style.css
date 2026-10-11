@@ -103,7 +103,6 @@ button.danger { background: var(--neg); color: var(--on-accent); }
 .badge.neutral { background: var(--neu-bg); }
 .srcs { display: flex; flex-wrap: wrap; gap: 6px; }
 .srcs a { font-size: 13px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; }
-.pager { display: flex; gap: 16px; justify-content: center; margin: 16px 0; }
 
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0 12px; }
 .facts dt { color: var(--muted); } .facts dd { margin: 0; }
@@ -194,3 +193,28 @@ button[disabled] { opacity: .5; cursor: default; }
   border: 1px solid var(--line, #ccc); border-radius: 4px; color: var(--muted, #666); vertical-align: middle; cursor: help; }
 details.orig { margin-top: .25em; }
 details.orig summary { cursor: pointer; color: var(--muted, #666); }
+
+/* Live-Anzeige laufender Abrufe (Startseite) */
+.activity { margin: 0 0 16px; }
+.activity .card { margin: 0; border-left: 4px solid var(--accent); }
+.acts-title { font-size: 1rem; margin: 0 0 4px; }
+.act { padding: 10px 0; border-top: 1px solid var(--line); }
+.act:first-of-type { border-top: 0; }
+.act-warn strong, .act-warn .act-icon { color: var(--warn); }
+.act-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.act-pct { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--accent); margin-left: auto; }
+.act-icon { width: 16px; text-align: center; color: var(--muted); }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line);
+  border-top-color: var(--accent); animation: spin .9s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 2px 0 6px; }
+.bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .6s ease; }
+.bar.indeterminate > span { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+.newtopics { background: var(--pos-bg); border-radius: var(--radius); padding: 8px 16px; margin-top: 8px; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner, .bar.indeterminate > span, .pulse { animation: none; }
+}
+
+/* Nachladen beim Scrollen */
+.more { text-align: center; margin: 16px 0 32px; min-height: 24px; }

@@ -1,0 +1,15 @@
+{% for it in items %}{% set t = it.t %}
+  <li class="topic {{ t.sentiment }}" data-id="{{ t.id }}">
+    <div class="meta">
+      <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
+      <span title="Erstes Erscheinen">erstmals {{ t.first_published_at|d }}</span>
+      {% if t.article_count > 1 %}<span>· {{ t.article_count }} Meldungen bis {{ t.last_published_at|d }}</span>{% endif %}
+      <span class="muted">· erfasst {{ t.created_at|d }}</span>
+    </div>
+    <h3><a href="/thema/{{ t.id }}">{{ t.title }}</a></h3>
+    {% if t.abstract %}<p>{{ t.abstract }}</p>{% endif %}
+    <div class="srcs">
+      {% for a in it.sources %}<a href="{{ a.url }}" target="_blank" rel="noopener noreferrer" title="{{ a.title }}">{{ a.source_name }}{% if a.lang and a.lang != 'de' %} <span class="lang">{{ lang_short.get(a.lang, a.lang|upper) }}</span>{% endif %}</a>{% endfor %}
+    </div>
+  </li>
+{% endfor %}

@@ -225,7 +225,7 @@ SETTINGS: list[Setting] = [
     Setting("public_dashboard", "bool", True, "Dashboard ohne Login sichtbar",
             "Wenn aus, ist auch die Übersicht passwortgeschützt.", "Anzeige"),
     Setting("timezone", "str", "Europe/Berlin", "Zeitzone für die Anzeige", "", "Anzeige"),
-    Setting("page_size", "int", 50, "Themen pro Seite", "", "Anzeige"),
+    Setting("page_size", "int", 50, "Themen je Nachladeschritt", "Beim Scrollen werden jeweils so viele weitere Themen nachgeladen.", "Anzeige"),
 ]
 
 BY_KEY = {s.key: s for s in SETTINGS}

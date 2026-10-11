@@ -10,6 +10,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
@@ -28,7 +29,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -186,7 +187,7 @@ def list_topics(args: dict, page: int, page_size: int, order: str = "new"):
     total = db.query_one(f"SELECT COUNT(*) n FROM topics t{where}", params)["n"]
     order_sql = {"new": "t.first_published_at DESC", "old": "t.first_published_at ASC",
                  "size": "t.article_count DESC, t.first_published_at DESC",
-                 "updated": "t.updated_at DESC"}.get(order, "t.first_published_at DESC")
+                 "updated": "t.updated_at DESC"}.get(order, "t.first_published_at DESC") + ", t.id DESC"
     rows = db.query(f"SELECT t.* FROM topics t{where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
                     (*params, page_size, (page - 1) * page_size))
     return total, rows
@@ -256,6 +257,8 @@ def status_info() -> dict:
         "negative": counts["neg"] or 0,
         "earliest_topic": counts["first"], "articles": arts,
         "last_run": dict(last) if last else None,
+        "last_scan_at": (db.query_one("SELECT MAX(started_at) t FROM runs WHERE kind IN "
+                                      "('regulär', 'initial', 'manuell', 'nachholen')") or {"t": None})["t"],
         "scan_running": pipeline.STATUS["scan"],
         "backfill_running": pipeline.STATUS["backfill"],
         "next_scan_at": pipeline.next_scan_time().isoformat() if config.state_get("initial_done") else None,
@@ -274,6 +277,107 @@ def status_info() -> dict:
     }
 
 
+def _since(iso: str | None) -> str:
+    """„seit 3 min“ aus einem ISO-Zeitstempel."""
+    if not iso:
+        return ""
+    try:
+        secs = (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds()
+    except ValueError:
+        return ""
+    if secs < 90:
+        return f"seit {int(secs)} s"
+    if secs < 5400:
+        return f"seit {int(secs // 60)} min"
+    return f"seit {secs / 3600:.1f} h"
+
+
+def _duration(secs: float) -> str:
+    if secs < 90:
+        return f"{int(secs)} s"
+    if secs < 5400:
+        return f"{int(secs // 60)} min"
+    if secs < 172800:
+        return f"{secs / 3600:.1f} h".replace(".", ",")
+    return f"{secs / 86400:.0f} Tage"
+
+
+def _pct(done, total) -> float | None:
+    return round(100 * done / total, 1) if total else None
+
+
+def activity() -> list[dict]:
+    """Was läuft gerade? Für die Live-Anzeige auf der Startseite (leer = Ruhe)."""
+    out = []
+    st = pipeline.STATUS
+    names = {"initial": "Initial-Scan", "regulär": "Aktualisierung", "manuell": "Aktualisierung (manuell)",
+             "nachholen": "Nachholen neuer Quellen"}
+    scan = st.get("scan")
+    if scan:
+        steps = []
+        pct = None
+        if scan.get("to_analyse"):
+            pct = _pct(scan.get("analysed", 0), scan["to_analyse"])
+            steps.append(f"{scan.get('analysed', 0)} von {scan['to_analyse']} neuen Meldungen verarbeitet")
+        elif scan.get("sources_total"):
+            pct = _pct(scan.get("sources_done", 0), scan["sources_total"])
+            steps.append(f"{scan.get('sources_done', 0)} von {scan['sources_total']} Quellen abgerufen")
+        if scan.get("fetched"):
+            steps.append(f"{scan['fetched']} Meldungen gefunden")
+        if scan.get("new_articles"):
+            steps.append(f"{scan['new_articles']} neu gespeichert")
+        out.append({"kind": "scan", "title": names.get(scan.get("kind"), "Scan"), "phase": scan.get("phase", ""),
+                    "detail": " · ".join(steps), "pct": pct, "since": _since(scan.get("started"))})
+    elif not config.state_get("initial_done"):
+        last = db.query_one("SELECT status FROM runs WHERE kind='initial' ORDER BY id DESC LIMIT 1")
+        if last and last["status"] == "fehler":
+            out.append({"kind": "warn", "title": "Initial-Scan fehlgeschlagen",
+                        "phase": "Keine Quelle erreichbar – neuer Versuch alle 10 Minuten.", "detail": "", "pct": None})
+        else:
+            out.append({"kind": "scan", "title": "Initial-Scan", "phase": "wird vorbereitet …", "detail": "",
+                        "pct": None})
+    pending = config.state_get("pending_catchup") or []
+    if pending and not (scan and scan.get("kind") == "nachholen"):
+        out.append({"kind": "wait", "title": "Nachholen neuer Quellen", "phase": f"{len(pending)} Quelle(n) nach "
+                    "Update – startet in Kürze", "detail": "", "pct": None})
+    prog = pipeline.backfill_progress()
+    open_n = prog["counts"].get("offen", 0)
+    if open_n and config.state_get("initial_done"):
+        bf = st.get("backfill")
+        session = st.get("backfill_session") or {}
+        if not config.get("backfill_enabled"):
+            out.append({"kind": "paused", "title": "Historie-Abruf angehalten",
+                        "phase": f"{prog['percent']:g} % abgerufen, {open_n} Aufgaben offen".replace(".", ","),
+                        "detail": "", "pct": prog["percent"]})
+        else:
+            steps = [f"{prog['done']} von {prog['total']} Abrufen erledigt"]
+            if session.get("tasks") and time.time() - session.get("started", time.time()) > 60:
+                rate = session["tasks"] / (time.time() - session["started"])
+                steps.append(f"noch etwa {_duration(open_n / rate)}")
+            if session.get("new_articles"):
+                steps.append(f"{session['new_articles']} Meldungen neu seit Start")
+            phase = "wartet auf nächsten Durchgang"
+            if bf:
+                phase = bf.get("phase", "")
+                if bf.get("to_analyse"):
+                    phase += f" ({bf.get('analysed', 0)}/{bf['to_analyse']})"
+                elif bf.get("tasks"):
+                    phase += f" ({bf.get('tasks_done', 0)}/{bf['tasks']})"
+                phase += f" · Zeitraum {bf.get('range', '')}"
+                if bf.get("sources"):
+                    phase += " · " + ", ".join(bf["sources"][:4]) + (" …" if len(bf["sources"]) > 4 else "")
+            out.append({"kind": "backfill", "title": "Historie wird abgerufen", "phase": phase,
+                        "detail": " · ".join(steps), "pct": prog["percent"]})
+    if st.get("reclassify") or config.state_get("pending_reclassify"):
+        out.append({"kind": "reclassify", "title": "Bewertungen werden neu berechnet",
+                    "phase": "nach geänderten Regeln" if not st.get("reclassify") else "läuft …", "detail": "",
+                    "pct": None})
+    if st.get("translate"):
+        out.append({"kind": "translate", "title": "Nachübersetzung",
+                    "phase": f"{st['translate']['n']} fremdsprachige Meldungen", "detail": "", "pct": None})
+    return out
+
+
 def _args(request: Request) -> dict:
     qp = request.query_params
     return {k: (qp.get(k) or "").strip() for k in ("q", "sentiment", "year", "source", "date_from", "date_to")}
@@ -288,6 +392,7 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
     size = int(config.get("page_size"))
     total, rows = list_topics(args, page, size, order)
     items = [{"t": t, "sources": topic_sources(t["id"])} for t in rows]
+    acts = activity()
     tl = timeline(args)
     # Skala für das gestapelte Diagramm: neutral liegt mittig auf der Nulllinie
     max_v = max([max(x["pos"] + x["neu"] / 2, x["neg"] + x["neu"] / 2) for x in tl] + [1])
@@ -297,9 +402,37 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
     return templates.TemplateResponse(request, "index.html", {
         "items": items, "total": total, "page": page, "pages": max(1, -(-total // size)), "args": args,
         "order": order, "timeline": tl, "max_v": max_v, "domains": domains, "status": status_info(),
+        "activity": acts, "more_url": "/fragment/topics?" + urlencode({**base_q, "order": order, "page": page + 1})
+        if page * size < total else "",
         "stats": stats(args), "period_since": pipeline.period()[0].isoformat(),
         "qs": lambda **kw: "?" + urlencode({**base_q, "order": order, **kw}),
     })
+
+
+@app.get("/fragment/topics", response_class=HTMLResponse)
+def fragment_topics(request: Request, page: int = 2, order: str = "new", _=Depends(maybe_public)):
+    """Weitere Themen für das Nachladen beim Scrollen (HTML-Ausschnitt)."""
+    args = _args(request)
+    page = max(1, page)
+    size = int(config.get("page_size"))
+    total, rows = list_topics(args, page, size, order)
+    base_q = {k: v for k, v in args.items() if v}
+    more = ("/fragment/topics?" + urlencode({**base_q, "order": order, "page": page + 1})
+            if page * size < total else "")
+    resp = templates.TemplateResponse(request, "_topic_items.html", {
+        "items": [{"t": t, "sources": topic_sources(t["id"])} for t in rows]})
+    resp.headers["X-More"] = more
+    return resp
+
+
+@app.get("/fragment/activity", response_class=HTMLResponse)
+def fragment_activity(request: Request, _=Depends(maybe_public)):
+    """Live-Anzeige laufender Abrufe; die Startseite fragt sie regelmäßig ab."""
+    acts = activity()
+    resp = templates.TemplateResponse(request, "_activity.html", {"activity": acts, "status": status_info()})
+    resp.headers["X-Active"] = "1" if acts else "0"
+    resp.headers["X-Topics"] = str(db.query_one("SELECT COUNT(*) n FROM topics WHERE hidden=0")["n"])
+    return resp
 
 
 @app.get("/thema/{topic_id}", response_class=HTMLResponse)

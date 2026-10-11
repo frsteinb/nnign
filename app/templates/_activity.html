@@ -1,0 +1,20 @@
+{% if activity %}
+<div class="card acts">
+<h2 class="acts-title">Läuft gerade</h2>
+{% for a in activity %}
+<div class="act act-{{ a.kind }}">
+  <div class="act-head">
+    {% if a.kind in ('paused', 'warn', 'wait') %}<span class="act-icon">{{ '⏸' if a.kind == 'paused' else ('!' if a.kind == 'warn' else '…') }}</span>
+    {% else %}<span class="spinner" aria-hidden="true"></span>{% endif %}
+    <strong>{{ a.title }}</strong>
+    {% if a.pct is not none %}<span class="act-pct">{{ ('%.1f'|format(a.pct)).replace('.0', '').replace('.', ',') }} %</span>{% endif %}
+    {% if a.since %}<span class="muted small">{{ a.since }}</span>{% endif %}
+  </div>
+  {% if a.pct is not none %}<div class="bar"><span style="width: {{ a.pct }}%"></span></div>
+  {% elif a.kind not in ('paused', 'warn', 'wait') %}<div class="bar indeterminate"><span></span></div>{% endif %}
+  {% if a.phase %}<div class="small">{{ a.phase }}</div>{% endif %}
+  {% if a.detail %}<div class="muted small">{{ a.detail }}</div>{% endif %}
+</div>
+{% endfor %}
+</div>
+{% endif %}

@@ -30,6 +30,8 @@ STATUS: dict = {
     "next_scan_at": None,
     "last_error": None,
     "reclassify": None,
+    "translate": None,     # {"n"} während der Nachübersetzung
+    "backfill_session": None,  # Summen seit Beginn des aktuellen Historie-Abrufs (für Tempo/Restzeit)
 }
 
 # Abbruch einer Archivquelle nach so vielen Fehlschlägen bzw. leeren Seiten in Folge
@@ -56,8 +58,10 @@ class Ctx:
 # ====================================================================== Verarbeitung
 
 def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | None = None,
-           fetch_details: bool = False, max_age_days: int | None = None) -> None:
-    """Neue, relevante Meldungen speichern und Themen zuordnen."""
+           fetch_details: bool = False, max_age_days: int | None = None, progress: dict | None = None) -> None:
+    """Neue, relevante Meldungen speichern und Themen zuordnen.
+    progress: optionales Status-Dict (STATUS["scan"] bzw. STATUS["backfill"]) für die Live-Anzeige."""
+    progress = progress if progress is not None else {}
     ctx.fetched += len(items)
     matcher = Matcher.from_config()
     now = datetime.now(timezone.utc)
@@ -108,7 +112,9 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
     use_llm = allow_llm and llm.available()
 
     # 3b. Fremdsprachige Meldungen ins Deutsche übersetzen (Original bleibt erhalten)
+    progress.update(to_analyse=len(new_items), analysed=0)
     if any(it.lang != "de" for it in new_items):
+        progress["phase"] = f"Übersetzung von {sum(it.lang != 'de' for it in new_items)} fremdsprachigen Meldungen"
         n = translate.translate_items(new_items, allow_llm=allow_llm)
         if n:
             ctx.log(f"{n} fremdsprachige Meldungen übersetzt ({translate.NAMES[translate.provider()]})")
@@ -118,7 +124,10 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
     with _ingest_lock:
         conn = db.connect()
         idf = topics.Idf(conn)
-        for it in new_items:
+        progress["phase"] = f"Analyse und Themenbildung für {len(new_items)} neue Meldungen"
+        for i, it in enumerate(new_items):
+            progress["analysed"] = i + 1
+            progress["new_articles"] = progress.get("new_articles_base", 0) + ctx.new_articles
             tkey = title_key(it.title_orig or it.title)
             if conn.execute("SELECT 1 FROM articles WHERE url=? OR (title_key=? AND source_domain=?)",
                             (it.url, tkey, it.source_domain)).fetchone():
@@ -253,9 +262,14 @@ def _collect_current(http: fetcher.Http, ctx: Ctx, initial: bool, source_ids: li
         return src, got, errors
 
     srcs = [s for s in all_sources(enabled_only=True) if source_ids is None or s["id"] in source_ids]
+    st = STATUS.get("scan") or {}
+    st.update(sources_total=len(srcs), sources_done=0, fetched=0)
     with ThreadPoolExecutor(max_workers=max(1, int(config.get("backfill_workers")))) as pool:
         for src, got, errors in pool.map(work, srcs):
             items += got
+            st["sources_done"] += 1
+            st["fetched"] += len(got)
+            st["current"] = src["name"]
             ctx.log(f"{src['name']}: {len(got)} Meldungen" + (f" ({len(errors)} Fehler)" if errors else ""))
             for e in errors:
                 ctx.log(f"  ! {e}")
@@ -276,9 +290,9 @@ def run_scan(kind: str, source_ids: list[int] | None = None) -> int | None:
     try:
         initial = kind in ("initial", "nachholen")
         items = _collect_current(http, ctx, initial, source_ids)
-        STATUS["scan"]["phase"] = f"Analyse von {len(items)} Meldungen"
+        STATUS["scan"]["phase"] = f"Prüfung von {len(items)} Meldungen"
         ingest(items, ctx, allow_llm=True, http=http, fetch_details=False,
-               max_age_days=None if initial else int(config.get("regular_lookback_days")))
+               max_age_days=None if initial else int(config.get("regular_lookback_days")), progress=STATUS["scan"])
         ctx.log(f"Fertig: {ctx.candidates} neue relevante Kandidaten, {ctx.new_articles} gespeichert, "
                 f"{ctx.new_topics} neue Themen, {ctx.llm_calls} KI-Aufrufe")
         if kind == "nachholen":
@@ -515,11 +529,19 @@ def backfill_batch(http: fetcher.Http) -> int:
         "SELECT t.*, s.enabled FROM backfill_tasks t JOIN sources s ON s.id=t.source_id "
         "WHERE t.status='offen' AND s.enabled=1 ORDER BY t.priority, t.attempts, t.period_start LIMIT ?", (limit,))
     if not tasks:
+        STATUS["backfill_session"] = None
         return 0
     srcs = {s["id"]: s for s in all_sources()}
     ctx = Ctx("backfill")
-    STATUS["backfill"] = {"phase": f"Abruf von {len(tasks)} Aufgaben",
-                          "range": f"{tasks[0]['period_start']} …", "started": db.utcnow()}
+    session = STATUS["backfill_session"] or {"started": time.time(), "tasks": 0, "new_articles": 0}
+    STATUS["backfill_session"] = session
+    starts = sorted(t["period_start"] for t in tasks if t["method"] != "wayback_index") or [""]
+    st = {"phase": f"Abruf von {len(tasks)} Archiv- und Suchseiten", "tasks": len(tasks), "tasks_done": 0,
+          "range": f"{starts[0]} … {starts[-1]}" if starts[0] else "Archiv-Index",
+          "sources": sorted({srcs[t["source_id"]]["name"] for t in tasks if t["source_id"] in srcs}),
+          "started": db.utcnow(), "new_articles_base": 0}
+    STATUS["backfill"] = st
+    done_lock = threading.Lock()
 
     def work(task):
         try:
@@ -527,6 +549,9 @@ def backfill_batch(http: fetcher.Http) -> int:
             return task, items, subs, None
         except (FetchError, httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
             return task, [], [], str(exc)
+        finally:
+            with done_lock:
+                st["tasks_done"] += 1
 
     with ThreadPoolExecutor(max_workers=max(1, int(config.get("backfill_workers")))) as pool:
         results = list(pool.map(work, tasks))
@@ -534,10 +559,12 @@ def backfill_batch(http: fetcher.Http) -> int:
     all_items: list[Item] = []
     for task, items, subs, err in results:
         all_items += items
-    STATUS["backfill"]["phase"] = f"Analyse von {len(all_items)} Meldungen"
+    st["phase"] = f"Prüfung von {len(all_items)} Meldungen"
     before = ctx.new_articles
     ingest(all_items, ctx, allow_llm=bool(config.get("llm_for_backfill")), http=http,
-           fetch_details=bool(config.get("backfill_fetch_details")))
+           fetch_details=bool(config.get("backfill_fetch_details")), progress=st)
+    session["tasks"] += len(tasks)
+    session["new_articles"] += ctx.new_articles - before
 
     matcher = Matcher.from_config()
     with db.tx() as conn:
@@ -645,7 +672,12 @@ def translate_pending(limit: int = 200) -> int:
         return 0
     items = [Item(url="", title=r["title"], summary=r["summary"] or "", published=datetime.now(timezone.utc),
                   source_name="", source_domain="", via="", lang=r["lang"]) for r in rows]
-    if not translate.translate_items(items, allow_llm=True):
+    STATUS["translate"] = {"n": len(items)}
+    try:
+        ok = translate.translate_items(items, allow_llm=True)
+    finally:
+        STATUS["translate"] = None
+    if not ok:
         return 0
     done = 0
     with _ingest_lock, db.tx() as conn:

@@ -2,15 +2,15 @@
 {% block content %}
 {% set st = status %}
 {% set sx = stats %}
+<section class="activity" id="activity" aria-live="polite" data-topics="{{ status.topics }}">
+{% include "_activity.html" %}
+</section>
+
 <section class="card statbox" aria-label="Statistik zum Datenbestand">
   <div class="card-head">
     <h2>Datenbestand{% if sx.filtered %} <span class="muted small">(aktuelle Auswahl)</span>{% endif %}</h2>
-    <div class="statusline muted small">
-      {% if st.scan_running %}<span class="pulse"></span> Scan läuft: {{ st.scan_running.phase }}
-      {% elif not st.initial_done and st.last_run and st.last_run.status == 'fehler' %}<span class="warn">Initial-Scan fehlgeschlagen – keine Quelle erreichbar. Neuer Versuch alle 10 Minuten; Details im Admin-Bereich.</span>
-      {% elif not st.initial_done %}<span class="pulse"></span> Initial-Scan wird vorbereitet …
-      {% else %}Letzter Scan {{ st.last_run.started_at|dt if st.last_run else '–' }} · nächster {{ st.next_scan_at|dt }}{% endif %}
-      {% if st.backfill.total and st.backfill.percent < 100 %} · Historie {{ st.backfill.percent }} % abgerufen{% endif %}
+    <div class="statusline muted small" id="statusline" {{ 'hidden' if activity }}>
+      Letzter Scan {{ st.last_scan_at|dt if st.last_scan_at else '–' }} · nächster {{ st.next_scan_at|dt }}
     </div>
   </div>
   <div class="kpis">
@@ -114,37 +114,20 @@
 {% if not items %}
   <div class="card empty">
     {% if not st.initial_done or st.scan_running %}
-      Der erste Scan läuft gerade. Die Seite aktualisiert sich automatisch.
+      Der erste Scan läuft gerade. Die Themen erscheinen hier, sobald sie erfasst sind.
     {% else %}
       Keine Themen gefunden. Prüfen Sie Filter oder im Admin-Bereich den Status der Quellen.
     {% endif %}
   </div>
 {% endif %}
 
-<ul class="topics">
-{% for it in items %}{% set t = it.t %}
-  <li class="topic {{ t.sentiment }}">
-    <div class="meta">
-      <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
-      <span title="Erstes Erscheinen">erstmals {{ t.first_published_at|d }}</span>
-      {% if t.article_count > 1 %}<span>· {{ t.article_count }} Meldungen bis {{ t.last_published_at|d }}</span>{% endif %}
-      <span class="muted">· erfasst {{ t.created_at|d }}</span>
-    </div>
-    <h3><a href="/thema/{{ t.id }}">{{ t.title }}</a></h3>
-    {% if t.abstract %}<p>{{ t.abstract }}</p>{% endif %}
-    <div class="srcs">
-      {% for a in it.sources %}<a href="{{ a.url }}" target="_blank" rel="noopener noreferrer" title="{{ a.title }}">{{ a.source_name }}{% if a.lang and a.lang != 'de' %} <span class="lang">{{ lang_short.get(a.lang, a.lang|upper) }}</span>{% endif %}</a>{% endfor %}
-    </div>
-  </li>
-{% endfor %}
+<ul class="topics" id="topics">
+{% include "_topic_items.html" %}
 </ul>
-
-{% if pages > 1 %}
-<nav class="pager">
-  {% if page > 1 %}<a href="{{ qs(page=page-1) }}">← zurück</a>{% endif %}
-  <span>Seite {{ page }} von {{ pages }}</span>
-  {% if page < pages %}<a href="{{ qs(page=page+1) }}">weiter →</a>{% endif %}
-</nav>
+{% if more_url %}
+<div class="more" id="more" data-url="{{ more_url }}">
+  <a href="{{ qs(page=page+1) }}">weitere Themen laden</a>
+</div>
 {% endif %}
 {% endblock %}
 
@@ -166,9 +149,60 @@
       g.addEventListener('mouseleave', function () { tip.hidden = true; });
     });
   }
-  {% if status.scan_running or not status.initial_done %}
-  setTimeout(function () { location.reload(); }, 15000);
-  {% endif %}
+
+  // Nachladen beim Scrollen
+  var list = document.getElementById('topics'), more = document.getElementById('more');
+  if (list && more && 'IntersectionObserver' in window) {
+    var url = more.dataset.url, busy = false;
+    more.innerHTML = '<span class="muted small">weitere Themen werden geladen …</span>';
+    var seen = {};
+    list.querySelectorAll('li[data-id]').forEach(function (li) { seen[li.dataset.id] = 1; });
+    var io = new IntersectionObserver(function (entries) {
+      if (!entries[0].isIntersecting || busy || !url) return;
+      busy = true;
+      fetch(url, {credentials: 'same-origin'}).then(function (r) {
+        url = r.headers.get('X-More') || '';
+        return r.text();
+      }).then(function (html) {
+        var tmp = document.createElement('ul');
+        tmp.innerHTML = html;
+        Array.prototype.slice.call(tmp.children).forEach(function (li) {
+          if (!seen[li.dataset.id]) { seen[li.dataset.id] = 1; list.appendChild(li); }
+        });
+        if (!url) { io.disconnect(); more.innerHTML = '<span class="muted small">Alle Themen geladen.</span>'; }
+      }).catch(function () {
+        more.innerHTML = '<a href="#" class="muted small">Laden fehlgeschlagen – erneut versuchen</a>';
+        more.querySelector('a').onclick = function (e) { e.preventDefault(); busy = false; io.unobserve(more); io.observe(more); };
+      }).finally(function () { busy = false; });
+    }, {rootMargin: '600px 0px'});
+    io.observe(more);
+  }
+
+  // Live-Anzeige laufender Abrufe
+  var box = document.getElementById('activity'), line = document.getElementById('statusline');
+  if (box) {
+    var topics0 = parseInt(box.dataset.topics || '0', 10), active = {{ 'true' if activity else 'false' }};
+    var poll = function () {
+      fetch('/fragment/activity', {credentials: 'same-origin'}).then(function (r) {
+        active = r.headers.get('X-Active') === '1';
+        var n = parseInt(r.headers.get('X-Topics') || '0', 10);
+        return r.text().then(function (html) {
+          box.innerHTML = html;
+          if (line) line.hidden = active;
+          if (n > topics0) {
+            var hint = document.createElement('div');
+            hint.className = 'newtopics';
+            hint.innerHTML = '<a href="">' + (n - topics0) + ' neue Themen seit dem Laden der Seite – anzeigen</a>';
+            box.appendChild(hint);
+            {% if not items %}location.reload();{% endif %}
+          }
+        });
+      }).catch(function () {}).finally(function () {
+        setTimeout(poll, document.hidden ? 30000 : (active ? 3000 : 30000));
+      });
+    };
+    setTimeout(poll, active ? 3000 : 30000);
+  }
 })();
 </script>
 {% endblock %}
