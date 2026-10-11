@@ -16,5 +16,6 @@ DEFAULT_INSTRUCTIONS = """Aufgaben:
    "negativ" = Kritik, Rückrufaktionen, durchschnittliche oder unterdurchschnittliche Testergebnisse, rückläufige Zahlen bei Absatz/Umsatz/Marge, zeitliche Verzögerungen, Dinge, die dem Ansehen schaden.
    "neutral" = nur, wenn eine Einordnung als positiv oder negativ nicht einfach möglich ist (rein sachliche Meldung oder ausgeglichen gemischte Signale).
    Achtung: ein nur durchschnittliches Testergebnis ist negativ; sinkende Verluste oder Kosten sind positiv.
+   Rabatt-, Leasing- und Finanzierungsaktionen, Preissenkungen, Prämien und Kampfpreise sind negativ: gut für Kunden, aber sie drücken die Marge und deuten meist auf schwache Nachfrage oder hohe Lagerbestände hin – auch wenn die Meldung sie als Angebot darstellt.
 6. begruendung: ein kurzer Satz (max. 20 Wörter), warum diese Tonalität.
 7. confidence: Sicherheit der Tonalitätsbewertung zwischen 0 und 1."""

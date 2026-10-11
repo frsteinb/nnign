@@ -166,6 +166,16 @@ RULES: list[Rule] = [
     Rule("Sorgen/Risiken", r"sorge(?![a-z])|sorgen um|angst|droht|drohen|bedroht|gefahrdet|warnung|warnt|"
          r"enttausch\w*|schwach\w*|verliert|minus(?![a-z])",
          -1.5, "„Sorge um Standorte“, „schwaches Quartal“"),
+    # Gut für Kunden, aber Druck auf die Marge – und meist ein Zeichen schwacher Nachfrage oder voller Lager
+    Rule("Rabatte/Lockangebote", r"\w*rabatt\w*|preisnachlass\w*|preissenkung\w*|senk\w* .{0,25}preis\w*|"
+         r"preise? (?:sinken|sinkt|gesenkt|runter)|kampfpreis\w*|preiskampf\w*|preiskrieg\w*|preisschlacht\w*|"
+         r"\w*schnappchen\w*|lockangebot\w*|lockt mit|sonderangebot\w*|sonderkondition\w*|aktionspreis\w*|"
+         r"null-?prozent-?finanzierung\w*|0-?prozent-?finanzierung\w*|0 ?%-?finanzierung\w*|"
+         r"finanzierung (?:zu|mit|fur) (?:0|null)|\w*leasing(?:angebot|aktion|deal|rate|offensive)\w*|"
+         r"leasing (?:ab|fur|zum|zu) |(?:fur|ab) [0-9]+ euro (?:im monat|monatlich|pro monat)|"
+         r"(?:wechsel|eroberungs|umtausch|hersteller|abwrack)pramie\w*|tageszulassung\w*|"
+         r"gunstig\w* (?:leas|finanz)\w*|verramsch\w*|ausverkauf",
+         -2.0, "„Rabattschlacht bei E-Autos“, „Leasing für 99 Euro im Monat“, „Null-Prozent-Finanzierung“"),
 ]
 
 _NEGATORS = {"kein", "keine", "keinen", "keiner", "keinem", "nicht", "ohne", "kaum", "weder", "nie", "niemals",
@@ -240,6 +250,9 @@ EN_RULES: list[Rule] = [
     Rule("Unfall/Sicherheit", r"dead|death\w*|kill\w*|fatal\w*|crash\w*|injur\w*", -2.0, "“fatal crash”"),
     Rule("Sorgen/Risiken", r"concern\w*|worr\w*|fear\w*|threat\w*|warn\w*|risk\w*|disappoint\w*|struggl\w*|"
          r"loses?|lost", -1.5, "“concerns over plants”"),
+    Rule("Rabatte/Lockangebote", r"discount\w*|price cuts?|cuts? (?:\w+ )?prices|slash\w* prices|price war\w*|"
+         r"incentives?|rebates?|(?:0|zero)(?:%|-percent| percent) financing|cheap leas\w*|leas(?:e|ing) deals?|"
+         r"bargain\w*|fire sale", -2.0, "“VW offers steep discounts”, “0% financing”"),
 ]
 
 # ---------------------------------------------------------------- Chinesisch (ohne Wortgrenzen)
@@ -269,6 +282,7 @@ ZH_RULES: list[Rule] = [
     Rule("Produktion/Technik-Probleme", r"罢工|故障|缺陷|问题|缺芯|断供|起火|自燃", -2.0, "„故障“ (Defekt)"),
     Rule("Politik/Handel", r"关税|制裁|贸易战", -1.5, "„关税“ (Zölle)"),
     Rule("Sorgen/Risiken", r"担忧|风险|警告|失利", -1.5, "„担忧“ (Sorge)"),
+    Rule("Rabatte/Lockangebote", r"降价|价格战|优惠|促销|让利|一口价|零首付|零利率", -2.0, "„降价“ (Preissenkung), „价格战“ (Preiskrieg)"),
 ]
 
 

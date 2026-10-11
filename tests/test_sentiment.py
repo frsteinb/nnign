@@ -59,6 +59,13 @@ CASES = [
     ("Volkswagen mit Licht und Schatten: Rekordumsatz, aber Gewinnwarnung", "neutral"),
     # „aber“ betont den Stellenabbau – überwiegend negativ
     ("VW investiert in Werk, streicht aber 2.000 Stellen", "negativ"),
+    # Rabatte, Leasing- und Finanzierungsangebote: gut für Kunden, schlecht für die Marge
+    ("VW lockt mit Leasing für 99 Euro im Monat", "negativ"),
+    ("Rabattschlacht: Audi senkt die Preise für E-Autos", "negativ"),
+    ("Null-Prozent-Finanzierung für den ID.3", "negativ"),
+    ("Cupra startet Leasingaktion für den Born", "negativ"),
+    ("Hohe Rabatte auf Tiguan-Tageszulassungen", "negativ"),
+    ("VW stellt neuen ID.2 für 25.000 Euro vor", "positiv"),
     # Fallen von früher
     ("VW-Werk in Brandenburg schließlich eröffnet", "positiv"),
     ("Tarifeinigung bei VW: Beschäftigungssicherung bis 2030", "positiv"),
@@ -86,3 +93,9 @@ def test_classify_thresholds():
     assert s.classify(6, 5) == "neutral"              # stark gemischt
     assert s.classify(6, 2) == "positiv"
     assert s.classify(3, 0, margin=4) == "neutral"    # strengere Marge
+
+
+def test_discounts_other_languages():
+    assert s.label_for(s.analyze("Volkswagen offers steep discounts on ID.4", "", "en")) == "negativ"
+    assert s.label_for(s.analyze("大众汽车降价促销", "", "zh")) == "negativ"
+
