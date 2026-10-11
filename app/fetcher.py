@@ -54,6 +54,57 @@ class FetchError(Exception):
     pass
 
 
+# ---------------------------------------------------------------- Zugriffsstatistik je Abrufweg
+# web = Feeds, Archiv- und Artikelseiten · search = Nachrichtensuche · wayback = Internet Archive
+
+BACKEND_NAMES = {"web": "Feeds, Archiv- und Artikelseiten", "search": "Nachrichtensuche (Google News)",
+                 "wayback": "Internet Archive (Wayback)"}
+_stats_lock = threading.Lock()
+_stats: dict = {}
+_stats_saved = [0.0]
+
+
+def backend_of(url: str) -> str:
+    if url.startswith(GNEWS_BASE) or "news.google.com" in url:
+        return "search"
+    if url.startswith(WAYBACK_BASE) or "archive.org" in httpx.URL(url).host:
+        return "wayback"
+    return "web"
+
+
+def _track(backend: str, ok: bool, status: int | None = None, msg: str = "") -> None:
+    from . import db
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _stats_lock:
+        if not _stats:
+            _stats.update(config.state_get("backend_stats") or {})
+        st = _stats.setdefault(backend, {})
+        if st.get("day") != today:
+            st.update(day=today, ok=0, err=0, limit=0)
+        now = db.utcnow()
+        if ok:
+            st["ok"] = st.get("ok", 0) + 1
+            st["last_ok"] = now
+        else:
+            st["err"] = st.get("err", 0) + 1
+            st["last_err"] = now
+            st["last_err_msg"] = msg[:200]
+            st["last_err_status"] = status
+            if status in (429, 503):
+                st["limit"] = st.get("limit", 0) + 1
+                st["last_limit"] = now
+        if not ok or time.time() - _stats_saved[0] > 60:
+            _stats_saved[0] = time.time()
+            config.state_set("backend_stats", _stats)
+
+
+def backend_stats() -> dict:
+    with _stats_lock:
+        if not _stats:
+            _stats.update(config.state_get("backend_stats") or {})
+        return {k: dict(v) for k, v in _stats.items()}
+
+
 class Http:
     """HTTP-Client mit Mindestabstand je Host."""
 
@@ -87,6 +138,9 @@ class Http:
                     time.sleep(wait)
                 try:
                     resp = self.client.get(url)
+                except httpx.HTTPError as exc:
+                    _track(backend_of(url), False, None, f"{type(exc).__name__}: {exc}")
+                    raise
                 finally:
                     self._last[host] = time.monotonic()
                 if resp.status_code not in (429, 503) or attempt:
@@ -99,7 +153,11 @@ class Http:
                 log.info("HTTP %s von %s – warte %.0f s", resp.status_code, host, pause)
                 time.sleep(pause)
         if resp.status_code >= 400:
+            # 404 einzelner Archivseiten ist normal und kein Störungszeichen des Abrufwegs
+            if resp.status_code != 404:
+                _track(backend_of(url), False, resp.status_code, f"HTTP {resp.status_code} für {url[:120]}")
             raise FetchError(f"HTTP {resp.status_code} für {url}")
+        _track(backend_of(url), True)
         return resp
 
     def close(self):

@@ -942,3 +942,109 @@ def work() -> None:
         _last["rerate"] = now
         if rerate_batch():
             _last["rerate"] = 0.0
+
+
+# ---------------------------------------------------------------------------------- Abrufwege und Dienste
+
+def _later(a: str | None, b: str | None) -> str | None:
+    return max((x for x in (a, b) if x), default=None)
+
+
+def backends() -> list[dict]:
+    """Abrufwege (Web, Suche, Wayback) und KI-/Übersetzungsdienste mit Zustand, letztem Zugriff und Zahlen."""
+    from . import fetcher
+    out: list[dict] = []
+
+    def add(group, key, name, state, last, numbers, details, actions=()):
+        label, meaning = STATES[state]
+        out.append({"group": group, "key": key, "name": name, "state": state, "state_label": label,
+                    "state_meaning": meaning, "last": last, "numbers": numbers, "details": details,
+                    "actions": list(actions), "pct": None})
+
+    # ------------------------------------------------ Abrufwege für Meldungen
+    stats = fetcher.backend_stats()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    extra = {}
+    snaps = db.query_one("SELECT COUNT(*) n, COUNT(DISTINCT feed) f FROM wayback_snaps") or {"n": 0, "f": 0}
+    extra["wayback"] = f" · {snaps['n']} Schnappschüsse von {snaps['f']} Feeds bekannt" if snaps["n"] else ""
+    hub_n = (db.query_one("SELECT COUNT(*) n FROM hub_pages") or {"n": 0})["n"]
+    extra["web"] = f" · {hub_n} Übersichtsseiten erkannt" if hub_n else ""
+    use = {"web": True, "search": bool(config.get("search_enabled")), "wayback": bool(config.get("backfill_wayback"))}
+    for key, name in fetcher.BACKEND_NAMES.items():
+        s = stats.get(key, {})
+        cur = s.get("day") == today
+        ok_n, err_n, lim_n = (s.get("ok", 0), s.get("err", 0), s.get("limit", 0)) if cur else (0, 0, 0)
+        last = _later(s.get("last_ok"), s.get("last_err"))
+        numbers = f"heute {ok_n} erfolgreich, {err_n} Fehler" + (f", {lim_n}× Limit" if lim_n else "") + extra.get(key, "")
+        err_after_ok = s.get("last_err") and (not s.get("last_ok") or s["last_err"] > s["last_ok"])
+        recent_limit = s.get("last_limit") and (not s.get("last_ok") or s["last_limit"] > s["last_ok"])
+        if not use.get(key, True):
+            state, details = "inactive", "in den Einstellungen abgeschaltet"
+        elif not last:
+            state, details = "queued", "noch kein Zugriff – wird beim nächsten passenden Abruf genutzt"
+        elif recent_limit:
+            state, details = "limit", (f"Anbieter bremst (HTTP {s.get('last_err_status')}) – nnign wartet automatisch "
+                                       "länger zwischen den Abrufen und macht weiter")
+        elif err_after_ok and (err_n > 3 * max(ok_n, 1) or not s.get("last_ok")):
+            state, details = "problem", f"zuletzt fehlgeschlagen: {s.get('last_err_msg') or 'unbekannter Fehler'}"
+        else:
+            state = "ok"
+            details = "erreichbar"
+            if s.get("last_err_msg"):
+                details += f" · letzter Fehler {_ago(s.get('last_err'))}: {s['last_err_msg']}"
+        add("Abrufwege für Meldungen", "be-" + key, name, state, _ago(last), numbers, details)
+
+    # ------------------------------------------------ KI-Anbieter (Haupt- und Ausweich-Anbieter)
+    for slot in llm.slots():
+        with llm.using(slot):
+            prov, mdl, miss = llm.provider_name(), llm.model(), llm.missing()
+        until, reason = llm.pause_info(slot)
+        r = llm.last_result(slot) or {}
+        name = f"KI: {llm.slot_label(slot)}" + (f" ({prov} · {mdl})" if prov else "")
+        numbers = f"heute {llm.calls_today()} Aufrufe insgesamt" if slot == "primary" else "–"
+        if miss:
+            state, details = ("inactive" if miss == "deaktiviert" else "setup"), miss
+        elif until > time.time():
+            state = "problem" if r.get("kind") in ("auth",) else "limit"
+            details = f"{reason} – weiter ab {_hhmm(until)} Uhr"
+        elif r.get("kind") in ("auth", "error", "offline", "bad_answer"):
+            state, details = "problem", llm.describe_result(r)
+        elif not r:
+            state, details = "queued", "noch nicht benutzt" + ("" if slot == "primary" else
+                                                              " – springt ein, wenn die vorherigen pausieren")
+        else:
+            state, details = "ok", "letzte Antwort: " + llm.describe_result(r)
+        add("KI-Dienste", "be-llm-" + slot, name, state, _ago(r.get("at")), numbers, details,
+            [("Testen", "/admin/llm-test", "secondary")] if slot == "primary" and not miss else [])
+
+    # ------------------------------------------------ Zero-Shot (Hugging Face)
+    if not classify.zs_configured():
+        state, details = "setup", classify.zs_status()
+    elif classify._zs_pause["until"] > time.time():
+        state = "problem" if any(w in classify._zs_pause["reason"] for w in ("ungültig", "nicht verfügbar")) else "limit"
+        details = f"{classify._zs_pause['reason']} – weiter ab {_hhmm(classify._zs_pause['until'])} Uhr"
+    elif classify._zs_pause.get("error"):
+        state, details = "problem", classify._zs_pause["error"]
+    else:
+        state, details = "ok", classify.zs_status()
+    add("KI-Dienste", "be-zeroshot", f"Zero-Shot-Modell ({config.get('zeroshot_model')})", state,
+        _ago(config.state_get("zs_last")),
+        f"heute {classify._zs_calls_today()} von {int(config.get('zeroshot_max_calls_per_day'))} Aufrufen", details,
+        [("Testen", "/admin/zeroshot-test", "secondary")] if classify.zs_configured() else [])
+
+    # ------------------------------------------------ Übersetzer
+    prov = translate.provider()
+    lt, deepl = translate.libretranslate_url(), bool((config.get("deepl_api_key") or "").strip())
+    avail = ", ".join(n for n, ok in (("LibreTranslate", lt), ("DeepL", deepl), ("KI", llm.available())) if ok)
+    if not prov:
+        state = "inactive" if config.get("translate_provider") == "none" else "setup"
+        details = translate.describe()
+    elif translate.paused_reason():
+        state, details = "limit", translate.paused_reason() + " – macht danach selbst weiter"
+    elif translate.last_problem.recent(1):
+        state, details = "problem", translate.last_problem.recent(1)
+    else:
+        state, details = "ok", f"genutzt: {translate.NAMES[prov]}" + (f" (unter {lt})" if prov == "libretranslate" else "")
+    add("KI-Dienste", "be-translate", "Übersetzer", state, _ago(config.state_get("translate_last")),
+        f"verfügbar: {avail or 'keiner'}", details, [("Testen", "/admin/translate-test", "secondary")] if prov else [])
+    return out

@@ -28,7 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.12.0"
+VERSION = "1.13.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -711,7 +711,7 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
         "current_session": (auth.current_session(request) or {"id": None})["id"],
         "session_days": auth.LIFETIME_DAYS, "session_max": auth.MAX_SESSIONS,
         "engines": engines_info(),
-        "jobs": maintenance.jobs(), "states": maintenance.STATES,
+        "jobs": maintenance.jobs(), "backends": maintenance.backends(), "states": maintenance.STATES,
         "source_counts": {r["d"]: r["n"] for r in db.query(
             "SELECT source_domain d, COUNT(*) n FROM articles WHERE relevant=1 GROUP BY source_domain")},
         "llm_name": llm.describe(), "translate_name": translate.describe(), "zs_name": classify.zs_status(),
@@ -897,6 +897,7 @@ def fragment_admin_status(request: Request, _=Depends(require_admin)):
     """Live-Teil des Admin-Status (Abruf, Historie, Hintergrundarbeiten)."""
     jobs = maintenance.jobs()
     resp = templates.TemplateResponse(request, "_admin_status.html", {"status": status_info(), "jobs": jobs,
+                                                                      "backends": maintenance.backends(),
                                                                       "states": maintenance.STATES})
     busy = any(j["state"] in ("run", "queued") for j in jobs)
     resp.headers["X-Busy"] = "1" if busy else "0"

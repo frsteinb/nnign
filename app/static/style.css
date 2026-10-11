@@ -373,3 +373,6 @@ rect.cov.growing { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 1
 .covnote { margin: 6px 0 0; color: var(--ink-2); }
 .covkey { margin-right: 8px; color: var(--muted); white-space: nowrap; }
 .covkey .cov { display: inline-block; width: 12px; height: 5px; border-radius: 1px; margin: 0 3px 1px 6px; vertical-align: middle; }
+
+/* Abrufwege und Dienste im Admin-Status */
+.subhead { margin: 1.4rem 0 .2rem; font-size: 1.05rem; }

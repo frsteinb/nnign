@@ -21,6 +21,30 @@
   {% endfor %}
 </table>
 </div>
+{% if backends %}
+<h3 class="subhead" id="dienste">Abrufwege und Dienste</h3>
+<p class="small muted">Woher nnign Meldungen holt und welche KI-/Übersetzungsdienste es nutzt – mit Zustand, letztem Zugriff und heutigen Zahlen.</p>
+<div class="scroll">
+<table class="list jobs">
+  <thead><tr><th>Dienst</th><th>Zustand</th><th>Letzter Zugriff</th><th>Zahlen</th><th>Details</th><th></th></tr></thead>
+  {% for group, rows in job_groups(backends) %}
+  <tbody>
+    <tr class="jobgroup"><th colspan="6">{{ group }}</th></tr>
+    {% for j in rows %}
+    <tr class="job st-{{ j.state }}" id="{{ j.key }}">
+      <td class="j-name" data-label="Dienst"><strong>{{ j.name }}</strong></td>
+      <td class="j-state" data-label="Zustand"><span class="state {{ j.state }}" title="{{ j.state_meaning }}">{{ j.state_label }}</span></td>
+      <td class="j-last small" data-label="Letzter Zugriff">{{ j.last }}</td>
+      <td class="j-num small" data-label="Zahlen">{{ j.numbers }}</td>
+      <td class="j-details small" data-label="Details">{{ j.details }}</td>
+      <td class="j-act" data-label="">{% if j.actions %}<div class="actions">{% for label, url, style in j.actions %}<form method="post" action="{{ url }}"><button class="{{ style or '' }} small-btn">{{ label }}</button></form>{% endfor %}</div>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
 <details class="legend small"><summary>Was bedeuten die Zustände?</summary>
   <ul>{% for code, v in states.items() %}<li><span class="state {{ code }}">{{ v[0] }}</span> {{ v[1] }}</li>{% endfor %}</ul>
 </details>

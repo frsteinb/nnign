@@ -140,3 +140,26 @@ def test_sources_table_and_toggle(env):
         assert db.query_one("SELECT enabled FROM sources WHERE id=?", (sid,))["enabled"] == 1
     finally:
         c.__exit__(None, None, None)
+
+
+def test_backends_section(env):
+    from app import fetcher, maintenance, pipeline
+    setup_world(env)
+    pipeline.upgrade_on_start({})
+    pipeline.run_scan("initial")
+    fetcher._track("search", True)
+    fetcher._stats["search"]["last_ok"] = "2020-01-01T00:00:00+00:00"    # Erfolg liegt vor dem Limit
+    fetcher._track("search", False, 429, "HTTP 429 für news.google.com")
+    rows = {r["key"]: r for r in maintenance.backends()}
+    assert {"be-web", "be-search", "be-wayback", "be-llm-primary", "be-zeroshot", "be-translate"} <= set(rows)
+    assert rows["be-search"]["state"] == "limit" and "1× Limit" in rows["be-search"]["numbers"]
+    assert rows["be-wayback"]["state"] == "ok" and "erfolgreich" in rows["be-wayback"]["numbers"]
+    assert rows["be-llm-primary"]["state"] == "setup"
+    fetcher._track("search", True)
+    assert {r["key"]: r for r in maintenance.backends()}["be-search"]["state"] == "ok"
+    c = _admin()
+    try:
+        t = c.get("/fragment/admin-status").text
+        assert "Abrufwege und Dienste" in t and "Internet Archive (Wayback)" in t and "Zero-Shot-Modell" in t
+    finally:
+        c.__exit__(None, None, None)
