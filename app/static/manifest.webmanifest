@@ -1,0 +1,23 @@
+{
+  "name": "nnign – No News Is Good News",
+  "short_name": "nnign",
+  "description": "VW-Konzern im Spiegel der Medien: Nachrichten-Themen, bewertet als positiv, neutral oder negativ.",
+  "lang": "de",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f6f4",
+  "theme_color": "#1c2b4a",
+  "categories": ["news", "business"],
+  "icons": [
+    {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/static/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    {"src": "/static/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
+  ],
+  "shortcuts": [
+    {"name": "Negative Themen", "url": "/?sentiment=negativ", "icons": [{"src": "/static/icons/icon-192.png", "sizes": "192x192"}]},
+    {"name": "Positive Themen", "url": "/?sentiment=positiv", "icons": [{"src": "/static/icons/icon-192.png", "sizes": "192x192"}]},
+    {"name": "Admin", "url": "/admin", "icons": [{"src": "/static/icons/icon-192.png", "sizes": "192x192"}]}
+  ]
+}

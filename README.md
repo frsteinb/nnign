@@ -38,7 +38,10 @@ docker build -t nnign .
 docker run -d --name nnign -p 8000:8000 -v "$PWD/data:/data" nnign
 ```
 
-**Admin-Zugang:** Benutzer `admin`. Ist `ADMIN_PASSWORD` nicht gesetzt, wird beim ersten Start ein
+**App auf dem Handy:** nnign ist eine PWA – im Browser „Zum Startbildschirm hinzufügen“ bzw. „App
+installieren“ (dafür muss nnign per HTTPS erreichbar sein, z. B. hinter einem Reverse-Proxy).
+
+**Admin-Zugang:** Anmeldung unter `/login` (bleibt 6 Monate ab letzter Nutzung, bis zu 5 Geräte). Ist `ADMIN_PASSWORD` nicht gesetzt, wird beim ersten Start ein
 Passwort erzeugt und im Log ausgegeben (`docker logs nnign`) sowie in
 `data/admin_password.txt` abgelegt. Es kann unter `/admin` geändert werden.
 

@@ -5,10 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}nnign – No News Is Good News{% endblock %}</title>
 <link rel="stylesheet" href="/static/style.css?v={{ version }}">
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1c2b4a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="nnign">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 </head>
 <body>
 <header class="top" id="top">
-  <a class="brand" href="/">nnign <span class="tagline">No News Is Good News · VW-Konzern im Spiegel der Medien</span></a>
+  <a class="brand" href="/"><img src="/static/logo.svg" alt="" class="brand-logo" width="30" height="30">nnign <span class="tagline">No News Is Good News · VW-Konzern im Spiegel der Medien</span></a>
   <nav>
     <a href="/">Themen</a>
     <a href="/export.csv">CSV</a>
@@ -38,6 +46,11 @@
     document.querySelector('.brand').focus({preventScroll: true});
   });
 })();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(function () {}); });
+}
 </script>
 {% block scripts %}{% endblock %}
 </body>

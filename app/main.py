@@ -17,7 +17,7 @@ from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -28,7 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.6.1"
+VERSION = "1.7.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -530,6 +530,29 @@ def doku(request: Request, _=Depends(maybe_public)):
         "default_days": pipeline.DEFAULT_PERIOD_DAYS, "breaker": pipeline.BREAKER_LIMIT,
         "translate_status": translate.describe(),
     })
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(os.path.join(HERE, "static", "manifest.webmanifest"), media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    with open(os.path.join(HERE, "static", "sw.js"), encoding="utf-8") as fh:
+        js = fh.read().replace("__VERSION__", VERSION)
+    return Response(js, media_type="text/javascript",
+                    headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
+@app.get("/offline", response_class=HTMLResponse)
+def offline(request: Request):
+    return templates.TemplateResponse(request, "offline.html", {})
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return FileResponse(os.path.join(HERE, "static", "icons", "favicon-32.png"), media_type="image/png")
 
 
 @app.get("/healthz")

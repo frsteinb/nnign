@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="t">
+  <title id="t">nnign – No News Is Good News</title>
+  <!-- Ring mit V über einem W, dessen Striche als Nachrichtenkurve fallen (schlechte) und steigen (gute News) -->
+  <circle cx="50" cy="50" r="45" fill="#ffffff" stroke="#1c2b4a" stroke-width="6"/>
+  <path d="M31 21 L50 53 L69 21" fill="none" stroke="#1c2b4a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="none" stroke-width="7" stroke-linecap="round">
+    <path d="M17 39 L33 76" stroke="#e34948"/>
+    <path d="M33 76 L50 53" stroke="#2a78d6"/>
+    <path d="M50 53 L67 76" stroke="#e34948"/>
+    <path d="M67 76 L80 46" stroke="#2a78d6"/>
+  </g>
+  <path d="M73.5 45.5 L83.5 37.5 L85.5 50.5 Z" fill="#2a78d6" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"/>
+  <g fill="#ffffff" stroke="#1c2b4a" stroke-width="2.5">
+    <circle cx="33" cy="76" r="3.6"/><circle cx="50" cy="53" r="3.6"/><circle cx="67" cy="76" r="3.6"/>
+  </g>
+</svg>
