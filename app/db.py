@@ -161,6 +161,8 @@ def query_one(sql: str, params=()):
 
 # Spalten, die nach der ersten Version hinzugekommen sind (für bestehende Datenbanken)
 MIGRATIONS = [
+    ("topics", "manual_group", "INTEGER NOT NULL DEFAULT 0"),   # vom Admin zusammengeführt -> bleibt zusammen
+    ("topics", "title_fixed", "INTEGER NOT NULL DEFAULT 0"),    # Titel vom Admin gesetzt
     ("topics", "sentiment_detail", "TEXT NOT NULL DEFAULT '{}'"),
     ("articles", "sentiment_detail", "TEXT NOT NULL DEFAULT '{}'"),
     ("sources", "language", "TEXT NOT NULL DEFAULT 'de'"),

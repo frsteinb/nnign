@@ -30,6 +30,7 @@
     <form method="post" action="/admin/translate-test"><button>Übersetzung testen</button></form>
     {% if st.foreign %}<form method="post" action="/admin/translate-pending"><button>Jetzt nachübersetzen</button></form>{% endif %}
     <form method="post" action="/admin/reclassify"><button {{ 'disabled' if st.reclassify_running }}>Bewertungen neu berechnen</button></form>
+    <a class="button" href="/?auswahl=1">Themen auswählen &amp; zusammenführen</a>
     <form method="post" action="/admin/regroup" onsubmit="return confirm('Alle automatisch gebildeten Themen neu bündeln?')"><button>Themen neu bündeln</button></form>
   </div>
   <p class="muted small">„Jetzt aktualisieren“ ruft sofort alle Quellen ab (sonst alle {{ groups['Zeitplan'][0].value }} h).

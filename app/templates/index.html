@@ -98,6 +98,7 @@
   <input type="date" name="date_from" value="{{ args.date_from }}" aria-label="von">
   <input type="date" name="date_to" value="{{ args.date_to }}" aria-label="bis">
   {% if args.year %}<input type="hidden" name="year" value="{{ args.year }}">{% endif %}
+  {% if select %}<input type="hidden" name="auswahl" value="1">{% endif %}
   <select name="order" aria-label="Sortierung">
     <option value="new" {{ 'selected' if order == 'new' }}>neueste zuerst</option>
     <option value="old" {{ 'selected' if order == 'old' }}>älteste zuerst</option>
@@ -109,7 +110,21 @@
 </form>
 
 <p class="muted">{{ total }} Themen{% if args.year %} im Jahr {{ args.year }}{% endif %} ·
-  <a href="/export.csv?{{ request.query_params }}">als CSV</a></p>
+  <a href="/export.csv?{{ request.query_params }}">als CSV</a> ·
+  {% if select %}<a href="{{ qs(auswahl='') }}">Auswahl beenden</a>{% else %}<a href="{{ qs(auswahl='1') }}" title="Nur für den Admin">Themen zusammenführen</a>{% endif %}</p>
+
+{% if select %}
+<div class="selecthint card small">{% if msg %}<strong>{{ msg }}.</strong> {% endif %}Auswahlmodus: Themen ankreuzen, die dieselbe Geschichte betreffen, und unten
+  „Zusammenführen“ wählen. Ziel ist das älteste Thema; es bleibt künftig auch beim automatischen Neu-Bündeln zusammen.
+  Einzelne Meldungen lassen sich auf der Themenseite wieder abtrennen.</div>
+<form id="mergeform" class="mergebar" method="post" action="/admin/topics/merge" hidden>
+  <span class="count"><strong id="mergecount">0</strong> ausgewählt</span>
+  <input type="text" name="title" maxlength="200" placeholder="Titel (optional, sonst ältestes Thema)" aria-label="Titel des zusammengeführten Themas">
+  <input type="hidden" name="back" value="{{ qs() }}">
+  <button type="submit" id="mergebtn" disabled>Zusammenführen</button>
+  <button type="button" class="link" id="mergeclear">Auswahl leeren</button>
+</form>
+{% endif %}
 
 {% if not items %}
   <div class="card empty">
@@ -179,6 +194,35 @@
         }
       } catch (e) {}
     }
+  }
+
+  // Auswahlmodus: Themen zum Zusammenführen ankreuzen
+  var mf = document.getElementById('mergeform');
+  if (mf) {
+    var cnt = document.getElementById('mergecount'), btn = document.getElementById('mergebtn');
+    var upd = function () {
+      var n = document.querySelectorAll('input[name=ids][form=mergeform]:checked').length;
+      cnt.textContent = n;
+      btn.disabled = n < 2;
+      btn.textContent = n >= 2 ? n + ' Themen zusammenführen' : 'Zusammenführen';
+      mf.hidden = n === 0;
+    };
+    document.addEventListener('change', function (e) {
+      if (e.target.matches('input[name=ids]')) {
+        e.target.closest('li').classList.toggle('picked', e.target.checked);
+        upd();
+      }
+    });
+    document.getElementById('mergeclear').addEventListener('click', function () {
+      document.querySelectorAll('input[name=ids]:checked').forEach(function (c) {
+        c.checked = false; c.closest('li').classList.remove('picked');
+      });
+      upd();
+    });
+    mf.addEventListener('submit', function (e) {
+      var n = document.querySelectorAll('input[name=ids][form=mergeform]:checked').length;
+      if (!confirm(n + ' Themen zu einem zusammenführen?')) e.preventDefault();
+    });
   }
 
   // Nachladen beim Scrollen

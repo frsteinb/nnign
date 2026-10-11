@@ -29,7 +29,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -85,6 +85,22 @@ def require_admin(request: Request, creds: HTTPBasicCredentials = Depends(securi
         if origin and urlsplit(origin).netloc not in allowed:
             raise HTTPException(403, "Ungültige Herkunft der Anfrage")
     return creds.username
+
+
+def _select_mode(request: Request) -> bool:
+    """Auswahlmodus der Startseite (?auswahl=1) – nur für den Admin; fordert sonst die Anmeldung an."""
+    if request.query_params.get("auswahl") != "1":
+        return False
+    import base64
+    try:
+        auth = request.headers.get("authorization", "")
+        user, _, pw = base64.b64decode(auth[6:]).decode().partition(":") if auth.lower().startswith("basic ") \
+            else ("", "", "")
+    except Exception:
+        user, pw = "", ""
+    if user != "admin" or not check_password(pw):
+        raise HTTPException(401, "Anmeldung erforderlich", headers={"WWW-Authenticate": 'Basic realm="nnign Admin"'})
+    return True
 
 
 def maybe_public(request: Request) -> None:
@@ -396,6 +412,7 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
     args = _args(request)
     page = max(1, page)
     size = int(config.get("page_size"))
+    select = _select_mode(request)
     total, rows = list_topics(args, page, size, order)
     items = [{"t": t, "sources": topic_sources(t["id"])} for t in rows]
     acts = activity()
@@ -405,7 +422,10 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
     domains = db.query("SELECT source_domain d, MIN(source_name) n, COUNT(*) c FROM articles "
                        "WHERE relevant=1 GROUP BY source_domain ORDER BY n")
     base_q = {k: v for k, v in args.items() if v}
+    if select:
+        base_q["auswahl"] = "1"
     return templates.TemplateResponse(request, "index.html", {
+        "select": select, "msg": request.query_params.get("msg", ""),
         "items": items, "total": total, "page": page, "pages": max(1, -(-total // size)), "args": args,
         "order": order, "timeline": tl, "max_v": max_v, "domains": domains, "status": status_info(),
         "activity": acts, "more_url": "/fragment/topics?" + urlencode({**base_q, "order": order, "page": page + 1})
@@ -421,12 +441,15 @@ def fragment_topics(request: Request, page: int = 2, order: str = "new", _=Depen
     args = _args(request)
     page = max(1, page)
     size = int(config.get("page_size"))
+    select = _select_mode(request)
     total, rows = list_topics(args, page, size, order)
     base_q = {k: v for k, v in args.items() if v}
+    if select:
+        base_q["auswahl"] = "1"
     more = ("/fragment/topics?" + urlencode({**base_q, "order": order, "page": page + 1})
             if page * size < total else "")
     resp = templates.TemplateResponse(request, "_topic_items.html", {
-        "items": [{"t": t, "sources": topic_sources(t["id"])} for t in rows]})
+        "items": [{"t": t, "sources": topic_sources(t["id"])} for t in rows], "select": select})
     resp.headers["X-More"] = more
     return resp
 
@@ -839,6 +862,26 @@ def admin_topic_merge(topic_id: int, target: int = Form(...), _=Depends(require_
     if target == topic_id or not db.query_one("SELECT 1 FROM topics WHERE id=?", (target,)):
         raise HTTPException(400, "Ziel-Thema existiert nicht")
     topics.merge(target, topic_id)
+    return RedirectResponse(f"/thema/{target}", status_code=303)
+
+
+@app.post("/admin/topics/merge")
+async def admin_topics_merge(request: Request, _=Depends(require_admin)):
+    """Ausgewählte Themen (Auswahlmodus der Startseite) zu einem zusammenführen."""
+    form = await request.form()
+    try:
+        ids = [int(x) for x in form.getlist("ids")]
+    except ValueError:
+        raise HTTPException(400, "Ungültige Auswahl")
+    if len(set(ids)) < 2:
+        raise HTTPException(400, "Bitte mindestens zwei Themen auswählen")
+    target = topics.merge_many(ids, str(form.get("title") or ""))
+    if target is None:
+        raise HTTPException(400, "Themen nicht gefunden")
+    back_qs = str(form.get("back") or "")
+    if back_qs.startswith("?"):   # zurück in den Auswahlmodus mit denselben Filtern
+        msg = f"{len(set(ids))} Themen zusammengeführt"
+        return RedirectResponse("/" + back_qs + "&" + urlencode({"msg": msg}) + f"#t{target}", status_code=303)
     return RedirectResponse(f"/thema/{target}", status_code=303)
 
 

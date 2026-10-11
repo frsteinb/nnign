@@ -227,7 +227,7 @@ def regroup() -> dict:
         with _ingest_lock:
             with db.tx() as conn:
                 keep = {r["id"] for r in conn.execute(
-                    "SELECT id FROM topics WHERE locked=1 OR sentiment_origin IN ('manuell', 'llm')")}
+                    "SELECT id FROM topics WHERE locked=1 OR manual_group=1 OR sentiment_origin IN ('manuell', 'llm')")}
                 # Begriffsstatistik mit den aktuellen Merkmalen neu aufbauen
                 conn.execute("DELETE FROM token_df")
                 idf = topics.Idf(conn)

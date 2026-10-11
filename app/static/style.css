@@ -87,6 +87,7 @@ input, select, textarea, button { font: inherit; color: var(--ink); background: 
 textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 13px; }
 .filters input[type=search] { flex: 1 1 220px; }
 button { background: var(--accent); color: var(--on-accent); border-color: transparent; cursor: pointer; }
+a.button { display: inline-block; background: var(--accent); color: var(--on-accent); border-radius: 8px; padding: 6px 10px; text-decoration: none; }
 button.link { background: none; color: var(--accent); padding: 0; border: 0; text-decoration: underline; font-size: 13px; }
 button.danger { background: var(--neg); color: var(--on-accent); }
 
@@ -229,3 +230,21 @@ details.orig summary { cursor: pointer; color: var(--muted, #666); }
 .to-top:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
 @media (max-width: 600px) { .to-top { right: 14px; bottom: 14px; } }
 @media (prefers-reduced-motion: reduce) { .to-top { transition: none; } }
+
+/* Auswahlmodus: Themen zusammenführen */
+.topic.selectable { position: relative; padding-left: 48px; }
+.topic .pick { position: absolute; left: 12px; top: 14px; display: flex; padding: 4px; cursor: pointer; }
+.topic .pick input { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
+.topic.picked { outline: 2px solid var(--accent); outline-offset: -2px; }
+.selecthint { border-left: 4px solid var(--accent); }
+.mergebar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 60;
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap; max-width: calc(100% - 32px);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .18); padding: 10px 14px; }
+.mergebar[hidden] { display: none; }
+.mergebar input[type=text] { min-width: 240px; flex: 1; }
+@media (max-width: 600px) { .mergebar { bottom: 8px; width: calc(100% - 16px); } .mergebar input[type=text] { min-width: 0; width: 100%; } }
+body:has(.mergebar:not([hidden])) .to-top { bottom: 92px; }
+body:has(.mergebar:not([hidden])) main { padding-bottom: 110px; }
+@media (max-width: 600px) { body:has(.mergebar:not([hidden])) .to-top { bottom: 150px; }
+  body:has(.mergebar:not([hidden])) main { padding-bottom: 160px; } }

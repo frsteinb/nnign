@@ -111,8 +111,8 @@ def candidates(conn, published: datetime, window_days: int) -> list:
     lo = (published - timedelta(days=window_days)).isoformat()
     hi = (published + timedelta(days=window_days)).isoformat()
     return conn.execute(
-        "SELECT id, title, abstract, signature, first_published_at, last_published_at, locked, sentiment_origin "
-        "FROM topics WHERE hidden=0 AND last_published_at>=? AND first_published_at<=? "
+        "SELECT id, title, abstract, signature, first_published_at, last_published_at, locked, sentiment_origin, "
+        "manual_group FROM topics WHERE hidden=0 AND last_published_at>=? AND first_published_at<=? "
         "AND first_published_at>=? AND last_published_at<=?",
         (lo, hi, (published - span).isoformat(), (published + span).isoformat())).fetchall()
 
@@ -208,10 +208,11 @@ def refresh(conn, topic_id: int) -> None:
         fields["sentiment"] = label
         fields["sentiment_score"] = score
         fields["sentiment_detail"] = json.dumps(detail, ensure_ascii=False)
-        fields["title"] = arts[0]["title"]
-        with_summary = [a for a in arts if len(a["summary"] or "") >= 60]
-        if with_summary:
-            fields["abstract"] = shorten(with_summary[0]["summary"])
+        if not t["title_fixed"]:
+            fields["title"] = arts[0]["title"]
+            with_summary = [a for a in arts if len(a["summary"] or "") >= 60]
+            if with_summary:
+                fields["abstract"] = shorten(with_summary[0]["summary"])
     sets = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE topics SET {sets} WHERE id=?", (*fields.values(), topic_id))
 
@@ -237,8 +238,28 @@ def merge_in(conn, target_id: int, source_id: int) -> None:
 
 
 def mergeable(row) -> bool:
-    """Automatisch zusammenlegen nur, was nicht von Hand bearbeitet oder gesperrt ist."""
-    return not row["locked"] and row["sentiment_origin"] != "manuell"
+    """Automatisch zusammenlegen nur, was nicht von Hand bearbeitet, gesperrt oder gebündelt ist."""
+    return not row["locked"] and row["sentiment_origin"] != "manuell" and not row["manual_group"]
+
+
+def merge_many(ids: list[int], title: str = "") -> int | None:
+    """Mehrere Themen auf Anordnung des Admins zu einem zusammenführen. Ziel ist das älteste Thema;
+    das Ergebnis gilt als von Hand gebündelt (automatisches Neu-Bündeln trennt es nicht wieder).
+    Gibt die ID des Ziel-Themas zurück."""
+    ids = sorted(set(int(i) for i in ids))
+    with db.tx() as conn:
+        rows = conn.execute(f"SELECT id FROM topics WHERE id IN ({','.join('?' * len(ids))}) "
+                            "ORDER BY first_published_at, id", ids).fetchall() if ids else []
+        if len(rows) < 2:
+            return None
+        target = rows[0]["id"]
+        for r in rows[1:]:
+            merge_in(conn, target, r["id"])
+        conn.execute("UPDATE topics SET manual_group=1, updated_at=? WHERE id=?", (db.utcnow(), target))
+        if title.strip():
+            conn.execute("UPDATE topics SET title=?, title_fixed=1 WHERE id=?", (title.strip()[:200], target))
+        refresh(conn, target)
+        return target
 
 
 def compatible(conn, a_id: int, b_id: int, idf: Idf) -> bool:

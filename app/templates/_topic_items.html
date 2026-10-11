@@ -1,10 +1,12 @@
 {% for it in items %}{% set t = it.t %}
-  <li class="topic {{ t.sentiment }}" data-id="{{ t.id }}">
+  <li class="topic {{ t.sentiment }}{{ ' selectable' if select }}" data-id="{{ t.id }}" id="t{{ t.id }}">
+    {% if select %}<label class="pick" title="Für das Zusammenführen auswählen"><input type="checkbox" name="ids" value="{{ t.id }}" form="mergeform" aria-label="Thema {{ t.id }} auswählen"></label>{% endif %}
     <div class="meta">
       <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
       <span title="Erstes Erscheinen">erstmals {{ t.first_published_at|d }}</span>
       {% if t.article_count > 1 %}<span>· {{ t.article_count }} Meldungen bis {{ t.last_published_at|d }}</span>{% endif %}
       <span class="muted">· erfasst {{ t.created_at|d }}</span>
+      {% if t.manual_group %}<span class="muted" title="Vom Admin zusammengeführt">· gebündelt</span>{% endif %}
     </div>
     <h3><a href="/thema/{{ t.id }}">{{ t.title }}</a></h3>
     {% if t.abstract %}<p>{{ t.abstract }}</p>{% endif %}
