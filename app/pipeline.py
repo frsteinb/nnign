@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-from . import classify, config, db, fetcher, hubs, llm, sentiment, topics, translate
+from . import classify, config, db, fetcher, hubs, llm, refine, sentiment, topics, translate
 from .fetcher import FetchError, Item
 from .relevance import Matcher
 from .sources import all_sources, feeds_of
@@ -687,12 +687,18 @@ def _run_task(http: fetcher.Http, task, src) -> tuple[list[Item], list[tuple]]:
         today = datetime.now(timezone.utc).date()
         since, until = period()
         until = min(until or today, today)
-        snaps = fetcher.wayback_index(http, task["target"], since, until,
-                                      config.get("backfill_wayback_granularity"))
+        feed = task["target"].split("#", 1)[0]
+        snaps = fetcher.wayback_index(http, feed, since, until, "day")     # alle Tages-Schnappschüsse
+        with db.tx() as conn:
+            conn.executemany("INSERT OR IGNORE INTO wayback_snaps(feed, ts) VALUES(?, ?)",
+                             [(feed, ts) for ts, _ in snaps])
         subs = []
-        for i, (ts, original) in enumerate(snaps):
+        for i, (ts, original) in enumerate(refine.sample(snaps, config.get("backfill_wayback_granularity"))):
             d = datetime.strptime(ts[:8], "%Y%m%d").date()
             subs.append(("wayback_feed", fetcher.wayback_snapshot_url(ts, original), d, d, _priority(i)))
+        if task["target"].endswith("#lueckenfuellung"):
+            with db.tx() as conn:
+                refine.refine_existing_wayback(conn, feed, task["source_id"])
         return [], subs
     if method == "wayback_feed":
         url = task["target"]
@@ -755,13 +761,21 @@ def backfill_batch(http: fetcher.Http) -> int:
                 conn.execute("UPDATE backfill_tasks SET status=?, attempts=attempts+1, error=?, done_at=? WHERE id=?",
                              (status, err[:500], db.utcnow(), task["id"]))
             else:
+                covers = min((it.published.date() for it in items), default=None)
                 conn.execute("UPDATE backfill_tasks SET status='ok', attempts=attempts+1, items=?, relevant=?, "
-                             "error='', done_at=? WHERE id=?",
-                             (len(items), relevant, db.utcnow(), task["id"]))
-            for method, target, start, end, prio in subs:
+                             "error='', done_at=?, covers_from=? WHERE id=?",
+                             (len(items), relevant, db.utcnow(), covers.isoformat() if covers else "", task["id"]))
+                src = srcs.get(task["source_id"])
+                if src is not None:   # Verdichtung: volle Suchfenster halbieren, Wayback-Lücken füllen
+                    subs = list(subs) + refine.search_splits(task, len(items), src)
+                    if task["method"] == "wayback_feed":
+                        subs += refine.wayback_gaps(conn, task, covers or date.fromisoformat(task["period_start"]))
+            for sub in subs:
+                method, target, start, end, prio = sub[:5]
+                depth = sub[5] if len(sub) > 5 else 0
                 conn.execute("INSERT OR IGNORE INTO backfill_tasks(source_id, method, target, period_start, "
-                             "period_end, priority) VALUES(?,?,?,?,?,?)",
-                             (task["source_id"], method, target, start.isoformat(), end.isoformat(), prio))
+                             "period_end, priority, depth) VALUES(?,?,?,?,?,?,?)",
+                             (task["source_id"], method, target, start.isoformat(), end.isoformat(), prio, depth))
             _breaker(conn, task, err, len(items))
     STATUS["backfill"] = None
     log.info("Backfill: %d Aufgaben, %d Meldungen, %d neu gespeichert", len(tasks), len(all_items),

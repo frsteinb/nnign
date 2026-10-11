@@ -104,6 +104,25 @@ VW-Übersicht gelten als konzernrelevant, auch wenn ihr Titel den Konzern nicht 
     eine URL geändert hat), werden ihre restlichen Aufgaben gestoppt und im Admin-Bereich angezeigt.</li>
 </ul>
 
+<h3 id="datenlage">Datenlage: Warum neuere Jahre mehr Meldungen haben</h3>
+<p>Für das laufende Jahr liefern Feeds, regelmäßige Abrufe und die Nachrichtensuche praktisch alles. Ältere Jahre
+stammen nur aus dem Historie-Abruf und sind deshalb lückenhafter:</p>
+<ul>
+  <li><strong>Nachrichtensuche:</strong> liefert je Anfrage höchstens rund 100 Treffer. nnign fragt daher zunächst in
+    Zeitfenstern von {{ cfg('backfill_search_window_days') }} Tagen und <em>halbiert ein Fenster automatisch</em>, wenn es voll war –
+    bis auf wenige Tage herunter. So wächst die Historie mit der Zeit dichter.</li>
+  <li><strong>Internet Archive:</strong> Ein Schnappschuss eines Feeds enthält nur dessen letzte Meldungen (oft ein bis zwei
+    Tage). Zwischen zwei Schnappschüssen mit Lücke ruft nnign automatisch weitere dazwischen ab (bis zu
+    {{ cfg('backfill_wayback_refine_depth') }} Halbierungen je Lücke). Vollständig wird es so nicht: Das Archiv hat nicht von
+    jedem Tag einen Schnappschuss.</li>
+  <li><strong>Archivseiten</strong> (z. B. SPIEGEL, tagesschau, ZEIT, heise) sind am vollständigsten – sofern sie erreichbar
+    sind und die Artikel-Links erkannt werden.</li>
+</ul>
+<p>Der Streifen unter den Jahren im Zeitstrahl zeigt die Datenlage je Jahr relativ zu den am besten erfassten Jahren:
+<span class="covkey"><span class="cov gut"></span>gut <span class="cov mittel"></span>mittel <span class="cov dünn"></span>dünn</span>;
+gestrichelt umrandet = der Historie-Abruf ergänzt dieses Jahr noch. In dünn erfassten Jahren sind Zahlen und Anteile
+eher Stichproben.</p>
+
 <h2 id="relevanz">4. Relevanz</h2>
 <p>Eine Meldung gilt als relevant, wenn im <strong>Titel</strong> ein Konzern- oder Markenbegriff vorkommt oder im
 <strong>Teaser</strong> mindestens {{ cfg('min_summary_hits') }} Treffer stehen. Steht im Titel ein Ausschlussbegriff

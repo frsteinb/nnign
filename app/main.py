@@ -28,7 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.11.1"
+VERSION = "1.12.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -462,6 +462,7 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
         "select": select, "msg": request.query_params.get("msg", ""),
         "items": items, "total": total, "page": page, "pages": max(1, -(-total // size)), "args": args,
         "order": order, "timeline": tl, "max_v": max_v, "domains": domains, "status": status_info(),
+        "coverage": maintenance.coverage_by_year(),
         "activity": acts, "more_url": "/fragment/topics?" + urlencode({**base_q, "order": order, "page": page + 1})
         if page * size < total else "",
         "stats": stats(args), "period_since": pipeline.period()[0].isoformat(),

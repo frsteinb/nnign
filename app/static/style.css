@@ -364,3 +364,12 @@ button.switch span { position: absolute; top: 3px; left: 3px; width: 16px; heigh
   background: var(--surface); transition: left .15s; }
 button.switch.on { background: var(--ok); }
 button.switch.on span { left: 19px; }
+
+/* Datenlage je Jahr */
+.cov.gut { fill: var(--ok); background: var(--ok); }
+.cov.mittel { fill: var(--warn); background: var(--warn); opacity: .8; }
+.cov.dünn { fill: var(--neg); background: var(--neg); opacity: .55; }
+rect.cov.growing { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 1; }
+.covnote { margin: 6px 0 0; color: var(--ink-2); }
+.covkey { margin-right: 8px; color: var(--muted); white-space: nowrap; }
+.covkey .cov { display: inline-block; width: 12px; height: 5px; border-radius: 1px; margin: 0 3px 1px 6px; vertical-align: middle; }

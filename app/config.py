@@ -169,6 +169,9 @@ SETTINGS: list[Setting] = [
             "Holt archivierte Schnappschüsse der RSS-Feeds aus dem Internet Archive.", "Archiv / Backfill"),
     Setting("backfill_wayback_granularity", "choice", "month", "Wayback-Schnappschüsse pro",
             "Ein Schnappschuss je Tag/Woche/Monat und Feed.", "Archiv / Backfill", ["day", "week", "month"]),
+    Setting("backfill_wayback_refine_depth", "int", 3, "Wayback-Lücken füllen (Stufen)",
+            "Zwischen zwei Schnappschüssen mit Lücke wird der mittlere weitere abgerufen, so viele Halbierungen tief "
+            "(3 = bis zu 7 zusätzliche Schnappschüsse je Lücke; 0 = aus).", "Archiv / Backfill"),
     Setting("backfill_wayback_fallback", "bool", True, "Archivseiten notfalls über Wayback laden",
             "Wenn eine Archivseite direkt nicht erreichbar ist, wird der nächstgelegene Wayback-Schnappschuss versucht.",
             "Archiv / Backfill"),

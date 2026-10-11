@@ -53,7 +53,8 @@
   {% set step = ((w - pad) / (n if n else 1)) %}
   {% set bw = [[step - 2, 2]|max, 44]|min %}{% set off = (step - 2 - bw) / 2 %}
   <div class="chart-wrap">
-  <svg class="chart" viewBox="0 0 {{ w }} {{ h + 18 }}" role="img" aria-label="Positive, neutrale und negative Themen je Zeitraum">
+  {% set covmap = {} %}{% for c in coverage %}{% set _ = covmap.update({c.year|string: c}) %}{% endfor %}
+  <svg class="chart" viewBox="0 0 {{ w }} {{ h + (28 if not args.year else 18) }}" role="img" aria-label="Positive, neutrale und negative Themen je Zeitraum">
     <line class="axis" x1="{{ pad }}" x2="{{ w }}" y1="{{ mid }}" y2="{{ mid }}"/>
     <text class="tick" x="{{ pad - 4 }}" y="14" text-anchor="end">{{ '%g'|format(max_v) }}</text>
     <text class="tick" x="{{ pad - 4 }}" y="{{ mid + 4 }}" text-anchor="end">0</text>
@@ -64,12 +65,14 @@
       {% set hz = p.neu * scale %}{% set hp = p.pos * scale %}{% set hn = p.neg * scale %}
       {% set label = p.key[5:] if args.year else p.key %}
       <a href="{{ qs(year=p.key[:4]) if not args.year else qs(date_from=p.key ~ '-01', date_to=p.key ~ '-31', year=args.year) }}">
-      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ">
+      {% set cv = covmap.get(p.key[:4]) %}
+      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ{% if cv and not args.year %} · Datenlage {{ cv.level }}{{ ' – wird noch ergänzt' if cv.growing }}{% endif %}">
         <rect class="hit" x="{{ x - 1 - off }}" y="0" width="{{ step }}" height="{{ h }}"/>
         {% if p.neu %}<rect class="neu" x="{{ x }}" y="{{ mid - hz/2 }}" width="{{ bw }}" height="{{ [hz, 1]|max }}"/>{% endif %}
         {% if p.pos %}<rect class="pos" x="{{ x }}" y="{{ mid - hz/2 - 1 - hp }}" width="{{ bw }}" height="{{ hp }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
         {% if p.neg %}<rect class="neg" x="{{ x }}" y="{{ mid + hz/2 + 1 }}" width="{{ bw }}" height="{{ hn }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
       </g></a>
+      {% if cv and not args.year %}<rect class="cov {{ cv.level }}{{ ' growing' if cv.growing }}" x="{{ x }}" y="{{ h + 19 }}" width="{{ bw }}" height="5" rx="1"><title>{{ p.key }}: Datenlage {{ cv.level }} ({{ cv.articles }} Meldungen){{ ' – Historie wird noch ergänzt' if cv.growing }}</title></rect>{% endif %}
       {% if args.year or loop.index0 % ((n // 13) + 1) == 0 or loop.last %}
       <text class="tick" x="{{ x + bw/2 }}" y="{{ h + 14 }}" text-anchor="middle">{{ label }}</text>
       {% endif %}
@@ -77,6 +80,14 @@
   </svg>
   <div class="tooltip" hidden></div>
   </div>
+  {% if coverage and not args.year %}
+  {% set thin = coverage|selectattr('level', 'equalto', 'dünn')|map(attribute='year')|list %}
+  {% set growing = coverage|selectattr('growing')|list %}
+  <p class="covnote small"><span class="covkey"><span class="cov gut"></span>gut <span class="cov mittel"></span>mittel <span class="cov dünn"></span>dünn erfasst</span>
+    {% if thin %}Datenlage: {{ thin|length }} Jahr{{ 'e' if thin|length > 1 }} nur dünn erfasst{% if thin|length <= 6 %} ({{ thin|join(', ') }}){% else %} ({{ thin[0] }}–{{ thin[-1] }}, mit Ausnahmen){% endif %} – dort sind die Zahlen eher Stichproben als vollständig.{% endif %}
+    {% if growing %} Der Historie-Abruf ergänzt noch {{ growing|sum(attribute='open') }} Abrufe{% if growing|length <= 8 %} für {{ growing|map(attribute='year')|join(', ') }}{% endif %}; Lücken werden laufend geschlossen.{% endif %}
+    <a href="/doku#datenlage">Warum?</a></p>
+  {% endif %}
   <details class="table-view"><summary>Als Tabelle</summary>
     <table><thead><tr><th>Zeitraum</th><th>positiv</th><th>neutral</th><th>negativ</th></tr></thead><tbody>
     {% for p in timeline %}<tr><td>{{ p.key }}</td><td>{{ p.pos }}</td><td>{{ p.neu }}</td><td>{{ p.neg }}</td></tr>{% endfor %}

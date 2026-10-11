@@ -119,6 +119,12 @@ CREATE TABLE IF NOT EXISTS runs (
     log          TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS wayback_snaps (   -- alle verfügbaren Tages-Schnappschüsse eines Feeds
+    feed TEXT NOT NULL,
+    ts   TEXT NOT NULL,
+    PRIMARY KEY (feed, ts)
+);
+
 CREATE TABLE IF NOT EXISTS hub_pages (       -- erkannte Übersichtsseiten (keine Artikel)
     url           TEXT PRIMARY KEY,
     title         TEXT NOT NULL DEFAULT '',
@@ -178,6 +184,8 @@ def query_one(sql: str, params=()):
 
 # Spalten, die nach der ersten Version hinzugekommen sind (für bestehende Datenbanken)
 MIGRATIONS = [
+    ("backfill_tasks", "depth", "INTEGER NOT NULL DEFAULT 0"),      # Verfeinerungsstufe (0 = Grundplanung)
+    ("backfill_tasks", "covers_from", "TEXT NOT NULL DEFAULT ''"),   # Wayback: ältestes Datum im Schnappschuss
     ("articles", "scope", "TEXT NOT NULL DEFAULT 'konzern'"),   # konzern | partner (nur Partner/Beteiligung)
     ("topics", "scope", "TEXT NOT NULL DEFAULT 'konzern'"),
     ("topics", "zs_rated_count", "INTEGER NOT NULL DEFAULT 0"),   # Zero-Shot: Meldungen bei der Bewertung

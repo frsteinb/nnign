@@ -19,9 +19,9 @@ import hashlib
 import json
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from . import classify, config, db, hubs, llm, sentiment, topics, translate
+from . import classify, config, db, hubs, llm, refine, sentiment, topics, translate
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +73,7 @@ def bases() -> dict:
         "llm": llm.fingerprint() if llm.available() else "",
         "translate": translate.provider(),
         "hubs": hubs.VERSION,
+        "refine": _h(refine.VERSION, config.get("backfill_wayback_refine_depth")),
         "engine": _h(config.get("sentiment_engine"), config.get("learned_min_examples"),
                      config.get("learned_min_accuracy"), config.get("learned_min_confidence")),
     }
@@ -251,6 +252,15 @@ def check(startup: bool = False) -> list[str]:
             config.state_set("pending_reclassify", True)
             notes.append(f"Bewertungsverfahren: {config.get('sentiment_engine')} – Bewertungen werden neu bestimmt")
         _accept("engine", cur["engine"])
+
+    # Verdichtung des Historie-Abrufs (neu oder geändert) -> volle Suchfenster und Wayback-Lücken nachplanen
+    if cur["refine"] != old.get("refine"):
+        if db.query_one("SELECT 1 FROM backfill_tasks WHERE status='ok' LIMIT 1"):
+            r = refine.legacy_plan()
+            if r["search"] or r["index"]:
+                notes.append(f"Historie wird verdichtet: {r['search']} volle Suchfenster werden feiner abgefragt, "
+                             f"{r['index']} Feeds für die Lückenfüllung per Wayback vorbereitet")
+        _accept("refine", cur["refine"])
 
     # Erkennung von Übersichtsseiten neu/verbessert -> gespeicherte Übersichten entfernen und auflösen
     if cur["hubs"] != old.get("hubs"):
@@ -575,6 +585,44 @@ def zeroshot_batch(max_calls: int = 30) -> int:
 
 def _pct(done, total):
     return round(100 * done / total) if total else None
+
+
+# ---------------------------------------------------------------------------------- Datenlage je Jahr
+
+def coverage_by_year() -> list[dict]:
+    """Wie vollständig ist jedes Jahr erfasst? Meldungen, Herkunft, Stand des Historie-Abrufs und eine
+    grobe Einstufung (gut / mittel / dünn) relativ zu den am besten erfassten Jahren."""
+    from . import pipeline
+    since, until = pipeline.period()
+    rows = {r["y"]: dict(r) for r in db.query(
+        "SELECT substr(published_at,1,4) y, COUNT(*) n, SUM(via IN ('rss','suche')) live, SUM(via='archiv') archiv, "
+        "SUM(via='wayback') wayback, SUM(via='übersicht') hub FROM articles WHERE relevant=1 GROUP BY y")}
+    tasks = {r["y"]: dict(r) for r in db.query(
+        "SELECT substr(period_start,1,4) y, COUNT(*) total, SUM(status='offen') open, SUM(status='ok') ok, "
+        "SUM(status='fehler') failed, SUM(depth>0) refined FROM backfill_tasks WHERE method!='wayback_index' GROUP BY y")}
+    years = range(since.year, (until or _now().date()).year + 1)
+    counts = sorted((rows.get(str(y), {}).get("n", 0) for y in years), reverse=True)
+    top = counts[: max(1, len(counts) // 4)]
+    ref = max(1.0, sum(top) / len(top)) if top else 1.0
+    out = []
+    today = _now().date()
+    for y in years:
+        r = rows.get(str(y), {"n": 0, "live": 0, "archiv": 0, "wayback": 0, "hub": 0})
+        t = tasks.get(str(y), {"total": 0, "open": 0, "ok": 0, "failed": 0, "refined": 0})
+        n = r["n"] or 0
+        span = 1.0
+        if y == today.year:                           # laufendes Jahr hochrechnen
+            span = max(0.05, (today - date(y, 1, 1)).days / 365)
+        if y == since.year:
+            span = min(span, max(0.05, (date(y, 12, 31) - since).days / 365))
+        ratio = (n / span) / ref
+        level = "gut" if ratio >= 0.6 else ("mittel" if ratio >= 0.25 else "dünn")
+        out.append({"year": y, "articles": n, "level": level, "ratio": round(min(ratio, 1.0), 2),
+                    "open": t["open"] or 0, "ok": t["ok"] or 0, "failed": t["failed"] or 0, "total": t["total"] or 0,
+                    "refined": t["refined"] or 0,
+                    "sources": {k: r.get(k) or 0 for k in ("live", "archiv", "wayback", "hub")},
+                    "growing": bool(t["open"])})
+    return out
 
 
 # ---------------------------------------------------------------------------------- Arbeiten-Übersicht
