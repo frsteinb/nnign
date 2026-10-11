@@ -1,0 +1,17 @@
+<form method="post" action="{{ action }}" class="stack">
+  <div class="grid2">
+    <label>Name <input name="name" value="{{ s.name if s else '' }}" required></label>
+    <label>Domain <input name="domain" value="{{ s.domain if s else '' }}" placeholder="beispiel.de" required></label>
+  </div>
+  <label>RSS/Atom-Feeds (eine URL pro Zeile) <textarea name="feeds" rows="3">{{ s.feeds if s else '' }}</textarea></label>
+  <div class="grid2">
+    <label>Archiv-Vorlage <input name="archive_template" value="{{ s.archive_template if s else '' }}" placeholder="https://…/archiv/{YYYY}-{MM}-{DD}"></label>
+    <label>Link-Muster (Regex) <input name="link_pattern" value="{{ s.link_pattern if s else '' }}"></label>
+    <label>Archiv-Schritt
+      <select name="archive_step">{% for v in ['day','week','month','year'] %}<option {{ 'selected' if s and s.archive_step == v }}>{{ v }}</option>{% endfor %}</select></label>
+    <label>Archiv ab (JJJJ-MM-TT) <input name="archive_since" value="{{ s.archive_since if s else '' }}"></label>
+  </div>
+  <label class="inline"><input type="checkbox" name="use_search" {{ 'checked' if not s or s.use_search }}> Nachrichtensuche (site:domain) nutzen</label>
+  <label class="inline"><input type="checkbox" name="enabled" {{ 'checked' if not s or s.enabled }}> aktiv</label>
+  <button type="submit">Speichern</button>
+</form>

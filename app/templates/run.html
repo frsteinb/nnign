@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="/admin">← Admin</a></p>
+<section class="card">
+  <h1>Lauf #{{ r.id }} ({{ r.kind }})</h1>
+  <dl class="facts">
+    <dt>Start</dt><dd>{{ r.started_at|dt }}</dd>
+    <dt>Ende</dt><dd>{{ r.finished_at|dt }}</dd>
+    <dt>Status</dt><dd>{{ r.status }}</dd>
+    <dt>Abgerufen</dt><dd>{{ r.fetched }}</dd>
+    <dt>Neue relevante Kandidaten</dt><dd>{{ r.candidates }}</dd>
+    <dt>Gespeichert</dt><dd>{{ r.new_articles }}</dd>
+    <dt>Neue Themen</dt><dd>{{ r.new_topics }}</dd>
+    <dt>KI-Aufrufe</dt><dd>{{ r.llm_calls }}</dd>
+  </dl>
+  <pre class="log">{{ r.log }}</pre>
+</section>
+{% endblock %}

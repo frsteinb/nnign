@@ -1,0 +1,16 @@
+services:
+  vw-news:
+    build: .
+    image: vw-nachrichtenmonitor:latest
+    container_name: vw-nachrichtenmonitor
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      # Optional – alles ist auch im Admin-Bereich (/admin) einstellbar.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}          # leer = wird generiert und im Log ausgegeben
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}    # leer = rein regelbasierte Analyse
+      # NNIGN_SCAN_INTERVAL_HOURS: "4"
+      # NNIGN_BACKFILL_SINCE: "2000-01-01"
+    restart: unless-stopped
