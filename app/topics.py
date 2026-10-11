@@ -6,20 +6,20 @@ import math
 from collections import Counter
 from datetime import datetime, timedelta
 
-from . import db, sentiment
-from .textutil import cjk_bigrams, shorten, tokens
+from . import db, features, sentiment
+from .textutil import shorten
 
-SIG_SIZE = 60
+SIG_SIZE = 80
 DF_TOTAL = "__N__"
+ALGO_VERSION = 2   # bei Änderungen an Merkmalen/Zuordnung erhöhen -> Themen werden beim Start neu gebündelt
+
+# Anteil des Vergleichs mit der ähnlichsten einzelnen Meldung eines Themas (Rest: Themen-Signatur)
+ARTICLE_WEIGHT = 0.7
+RECENT_ARTICLES = 25
 
 
 def article_vector(title: str, summary: str) -> Counter:
-    vec = Counter()
-    for t in tokens(title) + cjk_bigrams(title):
-        vec[t] += 2.0
-    for t in tokens(summary) + cjk_bigrams(summary):
-        vec[t] += 1.0
-    return vec
+    return features.vector(title, summary)
 
 
 class Idf:
@@ -51,6 +51,31 @@ class Idf:
         self.n += 1
 
 
+MODEL_CONFLICT = 0.55   # Faktor, wenn beide Seiten Modelle nennen, aber kein gemeinsames
+BRAND_CONFLICT = 0.55   # beide nennen Konzernmarken, aber keine gemeinsame (Audi vs. Porsche)
+BRAND_MISSING = 0.8     # nur eine Seite nennt eine Konzernmarke (Porsche vs. nur „VW“)
+THIN_EVIDENCE = 0.6     # nur ein einziger gemeinsamer Begriff (z. B. nur „Rückruf“)
+
+
+def similarity(a: Counter, b: dict, idf: Idf) -> float:
+    """Kosinus-Ähnlichkeit mit Abschlägen für Widersprüche: verschiedene Modelle (ID.3 vs. Golf),
+    verschiedene Marken (VW vs. Porsche) oder nur ein einziger gemeinsamer Begriff."""
+    sim = cosine(a, b, idf)
+    if not sim:
+        return 0.0
+    ma, mb = features.models(a), features.models(b)
+    if ma and mb and not (ma & mb):
+        sim *= MODEL_CONFLICT
+    ba, bb = features.brands(a), features.brands(b)
+    if ba and bb and not (ba & bb):
+        sim *= BRAND_CONFLICT
+    elif bool(ba) != bool(bb):
+        sim *= BRAND_MISSING
+    if sum(1 for t in a if t in b) < 2:
+        sim *= THIN_EVIDENCE
+    return sim
+
+
 def cosine(a: Counter, b: dict, idf: Idf) -> float:
     if not a or not b:
         return 0.0
@@ -71,20 +96,64 @@ def merge_signature(sig: dict, vec: Counter) -> dict:
     return dict(c.most_common(SIG_SIZE))
 
 
+def _max_span() -> int:
+    try:
+        from . import config
+        return int(config.get("cluster_max_span_days"))
+    except Exception:
+        return 14
+
+
 def candidates(conn, published: datetime, window_days: int) -> list:
+    """Themen, zu denen die Meldung zeitlich passt: letzte Meldung höchstens window_days entfernt und
+    das Thema insgesamt nicht länger als cluster_max_span_days (gegen Kettenbildung)."""
+    span = timedelta(days=_max_span())
     lo = (published - timedelta(days=window_days)).isoformat()
     hi = (published + timedelta(days=window_days)).isoformat()
     return conn.execute(
         "SELECT id, title, abstract, signature, first_published_at, last_published_at, locked, sentiment_origin "
-        "FROM topics WHERE hidden=0 AND last_published_at>=? AND first_published_at<=?", (lo, hi)).fetchall()
+        "FROM topics WHERE hidden=0 AND last_published_at>=? AND first_published_at<=? "
+        "AND first_published_at>=? AND last_published_at<=?",
+        (lo, hi, (published - span).isoformat(), (published + span).isoformat())).fetchall()
 
 
-def best_matches(conn, vec: Counter, published: datetime, idf: Idf, window_days: int, top: int = 5):
+_vec_cache: dict[tuple, Counter] = {}
+
+
+def _article_vec(a) -> Counter:
+    key = (a["id"], a["title"], len(a["summary"] or ""))   # Titel im Schlüssel: Übersetzung/andere DB
+    v = _vec_cache.get(key)
+    if v is None:
+        if len(_vec_cache) > 20000:
+            _vec_cache.clear()
+        v = _vec_cache[key] = article_vector(a["title"], a["summary"] or "")
+    return v
+
+
+def best_matches(conn, vec: Counter, published: datetime, idf: Idf, window_days: int, top: int = 5,
+                 exclude: int | None = None):
+    """Ähnlichste Themen im Zeitfenster. Ähnlichkeit = Mischung aus bester Einzelmeldung des Themas
+    (findet Folgemeldungen, die nur einer Meldung ähneln) und Themen-Signatur (Gesamtbild)."""
+    rows = [r for r in candidates(conn, published, window_days) if r["id"] != exclude]
+    if not rows:
+        return []
+    by_topic: dict[int, list] = {}
+    ids = [r["id"] for r in rows]
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        for a in conn.execute(
+                f"SELECT id, topic_id, title, summary FROM articles WHERE topic_id IN ({','.join('?' * len(chunk))}) "
+                "ORDER BY published_at DESC", chunk):
+            lst = by_topic.setdefault(a["topic_id"], [])
+            if len(lst) < RECENT_ARTICLES:
+                lst.append(a)
     scored = []
-    for row in candidates(conn, published, window_days):
-        sim = cosine(vec, json.loads(row["signature"] or "{}"), idf)
+    for row in rows:
+        sig = similarity(vec, json.loads(row["signature"] or "{}"), idf)
+        best = max((similarity(vec, _article_vec(a), idf) for a in by_topic.get(row["id"], [])), default=sig)
+        sim = ARTICLE_WEIGHT * best + (1 - ARTICLE_WEIGHT) * sig
         if sim > 0:
-            scored.append((sim, row))
+            scored.append((round(sim, 4), row))
     scored.sort(key=lambda x: x[0], reverse=True)
     return scored[:top]
 
@@ -156,10 +225,32 @@ def rebuild_signature(conn, topic_id: int) -> None:
 
 def merge(target_id: int, source_id: int) -> None:
     with db.tx() as conn:
-        conn.execute("UPDATE articles SET topic_id=? WHERE topic_id=?", (target_id, source_id))
-        conn.execute("DELETE FROM topics WHERE id=?", (source_id,))
-        rebuild_signature(conn, target_id)
-        refresh(conn, target_id)
+        merge_in(conn, target_id, source_id)
+
+
+def merge_in(conn, target_id: int, source_id: int) -> None:
+    """Thema source in target aufgehen lassen (innerhalb einer laufenden Transaktion)."""
+    conn.execute("UPDATE articles SET topic_id=? WHERE topic_id=?", (target_id, source_id))
+    conn.execute("DELETE FROM topics WHERE id=?", (source_id,))
+    rebuild_signature(conn, target_id)
+    refresh(conn, target_id)
+
+
+def mergeable(row) -> bool:
+    """Automatisch zusammenlegen nur, was nicht von Hand bearbeitet oder gesperrt ist."""
+    return not row["locked"] and row["sentiment_origin"] != "manuell"
+
+
+def compatible(conn, a_id: int, b_id: int, idf: Idf) -> bool:
+    """Passen zwei Themen zusammen? (keine widersprüchlichen Modelle/Marken im Gesamtbild)"""
+    rows = {r["id"]: json.loads(r["signature"] or "{}") for r in conn.execute(
+        "SELECT id, signature FROM topics WHERE id IN (?, ?)", (a_id, b_id))}
+    if len(rows) < 2:
+        return False
+    sa, sb = Counter(rows[a_id]), Counter(rows[b_id])
+    ma, mb = features.models(sa), features.models(sb)
+    ba, bb = features.brands(sa), features.brands(sb)
+    return not (ma and mb and not (ma & mb)) and not (ba and bb and not (ba & bb))
 
 
 def detach_article(article_id: int) -> int | None:

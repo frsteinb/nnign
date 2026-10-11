@@ -169,6 +169,19 @@ Antwort:
 
 ---
 
+## H. Themenbündelung (seit 1.4.0)
+
+**H1. Wie fein sollen Themen sein?** Aktuell: eine konkrete Geschichte, höchstens 14 Tage lang
+(z. B. „Vorstellung ID.Tiguan“). Soll fortlaufende Berichterstattung (z. B. ein wochenlanger Tarifkonflikt)
+eher ein großes Thema sein oder in Etappen getrennt bleiben?
+Antwort:
+
+**H2. Bitte Beispiele für falsch getrennte oder falsch vermischte Themen** (Themen-IDs oder Titel) –
+sie wandern in den Testdatensatz `tests/data/cluster_cases.py`.
+Antwort:
+
+---
+
 ## F. Sonstiges
 
 **F1. Was fehlt Ihnen nach dem ersten Blick auf die Oberfläche?**

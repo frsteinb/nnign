@@ -31,6 +31,7 @@ STATUS: dict = {
     "last_error": None,
     "reclassify": None,
     "translate": None,     # {"n"} während der Nachübersetzung
+    "regroup": None,       # {"done", "total"} während des Neu-Bündelns
     "backfill_session": None,  # Summen seit Beginn des aktuellen Historie-Abrufs (für Tempo/Restzeit)
 }
 
@@ -169,6 +170,7 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                 else:
                     topic_id = _heuristic_topic(conn, it, vec, pub, senti, best_sim, best_row,
                                                 threshold, ctx)
+                    _bridge(conn, topic_id, matches, threshold, idf, ctx)
                 conn.execute(
                     "INSERT OR IGNORE INTO articles(url, title, title_key, summary, source_name, source_domain, "
                     "published_at, fetched_at, via, relevant, sentiment_score, sentiment_detail, topic_id, "
@@ -184,12 +186,91 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                         topics.refresh(conn, topic_id)
 
 
+BRIDGE_MARGIN = 0.04   # so viel über der Schwelle muss eine Meldung auch dem zweiten Thema ähneln
+
+
+def _bridge(conn, topic_id, matches, threshold, idf, ctx) -> None:
+    """Ähnelt eine neue Meldung zwei bestehenden Themen deutlich, gehören diese zusammen:
+    das zweite Thema geht im ersten auf (z. B. wenn erst Folgemeldungen die Verbindung zeigen)."""
+    if not topic_id or len(matches) < 2:
+        return
+    best_sim, best_row = matches[0]
+    if best_row["id"] != topic_id or not topics.mergeable(best_row):
+        return
+    for sim, row in matches[1:]:
+        if sim < threshold + BRIDGE_MARGIN:
+            break
+        if topics.mergeable(row) and topics.compatible(conn, topic_id, row["id"], idf):
+            topics.merge_in(conn, topic_id, row["id"])
+            ctx.merged = getattr(ctx, "merged", 0) + 1
+
+
 def _heuristic_topic(conn, it, vec, pub, senti, best_sim, best_row, threshold, ctx) -> int:
     if best_row is not None and best_sim >= threshold:
         return best_row["id"]
     ctx.new_topics += 1
     return topics.create_topic(conn, it.title, shorten(it.summary or ""), sentiment.label_for(senti),
                                senti.score, "lexikon", pub, vec, senti.detail())
+
+
+def regroup() -> dict:
+    """Themen neu bündeln: alle automatisch gebildeten Themen auflösen und ihre Meldungen in
+    zeitlicher Reihenfolge mit dem aktuellen Verfahren neu zuordnen. Von Hand bearbeitete, gesperrte
+    und von der KI gebildete Themen bleiben bestehen (neue Meldungen können ihnen zugeordnet werden).
+    Läuft nach einem Update des Verfahrens automatisch einmal (siehe upgrade_on_start)."""
+    threshold = float(config.get("cluster_threshold"))
+    window = int(config.get("cluster_window_days"))
+    before = db.query_one("SELECT COUNT(*) n FROM topics")["n"]
+    STATUS["regroup"] = {"done": 0, "total": 0}
+    ctx = Ctx("bündeln")
+    try:
+        with _ingest_lock:
+            with db.tx() as conn:
+                keep = {r["id"] for r in conn.execute(
+                    "SELECT id FROM topics WHERE locked=1 OR sentiment_origin IN ('manuell', 'llm')")}
+                # Begriffsstatistik mit den aktuellen Merkmalen neu aufbauen
+                conn.execute("DELETE FROM token_df")
+                idf = topics.Idf(conn)
+                arts = conn.execute("SELECT id, title, summary, published_at, topic_id, sentiment_detail "
+                                    "FROM articles WHERE relevant=1 ORDER BY published_at, id").fetchall()
+                for a in arts:
+                    idf.add_document(topics.article_vector(a["title"], a["summary"] or "").keys())
+                moving = [a for a in arts if a["topic_id"] not in keep]
+                marks = ",".join("?" * len(keep))
+                not_kept = f"NOT IN ({marks})" if keep else "IS NOT -1"
+                conn.execute(f"UPDATE articles SET topic_id=NULL WHERE relevant=1 AND (topic_id IS NULL OR "
+                             f"topic_id {not_kept})", tuple(keep))
+                conn.execute(f"DELETE FROM topics WHERE id {not_kept}", tuple(keep))
+                for tid in keep:
+                    topics.rebuild_signature(conn, tid)
+        topics._vec_cache.clear()
+        STATUS["regroup"]["total"] = len(moving)
+        # in Portionen, damit laufende Scans zwischendurch speichern können
+        for i in range(0, len(moving), 200):
+            with _ingest_lock, db.tx() as conn:
+                idf = topics.Idf(conn)
+                for a in moving[i:i + 200]:
+                    vec = topics.article_vector(a["title"], a["summary"] or "")
+                    published = datetime.fromisoformat(a["published_at"])
+                    matches = topics.best_matches(conn, vec, published, idf, window)
+                    best_sim, best_row = matches[0] if matches else (0.0, None)
+                    if best_row is not None and best_sim >= threshold:
+                        tid = best_row["id"]
+                    else:
+                        detail = json.loads(a["sentiment_detail"] or "{}")
+                        label, score, det = topics.aggregate_sentiment([detail])
+                        tid = topics.create_topic(conn, a["title"], shorten(a["summary"] or ""), label, score,
+                                                  "lexikon", a["published_at"], vec, det)
+                    conn.execute("UPDATE articles SET topic_id=? WHERE id=?", (tid, a["id"]))
+                    topics.attach(conn, tid, vec, a["published_at"])
+                    topics.refresh(conn, tid)
+                    _bridge(conn, tid, matches, threshold, idf, ctx)
+                STATUS["regroup"]["done"] = min(len(moving), i + 200)
+        after = db.query_one("SELECT COUNT(*) n FROM topics")["n"]
+        log.info("Themen neu gebündelt: %d Meldungen, %d -> %d Themen", len(moving), before, after)
+        return {"articles": len(moving), "before": before, "after": after}
+    finally:
+        STATUS["regroup"] = None
 
 
 def _source_status(src_id: int, status: str, n: int) -> None:
@@ -644,6 +725,11 @@ def upgrade_on_start(changes: dict | None = None) -> list[str]:
         n = plan_backfill()
         notes.append(f"Neue/aktualisierte Standardquellen: {', '.join(names)} – aktueller Zeitraum wird "
                      f"nachgeholt, {n} Backfill-Aufgaben eingeplant")
+    if config.state_get("topics_algo") != topics.ALGO_VERSION:
+        if has_data:
+            config.state_set("pending_regroup", True)
+            notes.append("Verfahren der Themenbildung verbessert – vorhandene Themen werden neu gebündelt")
+        config.state_set("topics_algo", topics.ALGO_VERSION)
     fp = sentiment.fingerprint()
     if config.state_get("rules_fingerprint") != fp:
         if has_data:
@@ -722,6 +808,9 @@ def _scheduler_loop() -> None:
         try:
             kind = _manual_request.pop("kind", None)
             pending = config.state_get("pending_catchup") or []
+            if config.state_get("pending_regroup") and not STATUS["regroup"]:
+                regroup()
+                config.state_set("pending_regroup", False)
             if config.state_get("pending_reclassify") and not STATUS["reclassify"]:
                 reclassify()
                 config.state_set("pending_reclassify", False)

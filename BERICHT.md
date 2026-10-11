@@ -83,6 +83,17 @@ Der Backfill übersteht Neustarts, weil jede Aufgabe in der Datenbank abgehakt w
   echter LibreTranslate-Container in der Sandbox nicht startbar (kein Netz) – Sprachcode für Chinesisch
   (`zh` bzw. `zh-Hans`) wird daher automatisch durchprobiert.
 
+### Nachtrag 1.4.0 – bessere Themenbündelung
+
+- Neues Begriffsprofil (`app/features.py`): Synonyme und Wendungen, Komposita-Zerlegung, Modellnamen und
+  Kennzahlen, Marken; Zuordnung über ähnlichste Einzelmeldung + Themenprofil, Abschläge bei widersprüchlichen
+  Modellen/Marken; Zusammenführen über verbindende Meldungen; Höchstdauer eines Themas gegen Kettenbildung.
+- Messung auf Referenzdaten (`python -m tests.cluster_eval`, 64 Meldungen/18 Geschichten): Trefferquote von
+  29 % auf 93 %, Präzision 100 %; zurückgehaltener IAA-Satz (5 gleichzeitige Vorstellungen) fehlerfrei.
+  Die Daten sind konstruiert, nicht aus echten Feeds – echte Fehlfälle bitte in FRAGEN.md H2 melden.
+- Modellnamen (ID.*, Tiguan, Taycan …) und Konzernmanager gelten jetzt als Konzernbezug (Relevanz).
+- Bestehende Daten werden nach dem Update beim Start automatisch neu gebündelt.
+
 ## Nicht getestet / Risiken
 
 | Risiko | Auswirkung | Gegenmaßnahme im System |

@@ -92,7 +92,8 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
     neue Standardquellen werden angelegt, für sie wird der aktuelle Zeitraum wie beim Initial-Scan nachgeholt und die
     Historie des Erfassungszeitraums eingeplant. Standardquellen, die der Admin nicht verändert hat, übernehmen
     geänderte Vorgaben (z. B. neue Feed-Adressen); vom Admin bearbeitete oder gelöschte Quellen bleiben, wie sie sind.
-    Haben sich die Bewertungsregeln geändert, werden alle Meldungen neu bewertet. Was geschehen ist, steht unter
+    Haben sich die Bewertungsregeln geändert, werden alle Meldungen neu bewertet; wurde das Verfahren der
+    Themenbildung verbessert, werden die Themen neu gebündelt. Was geschehen ist, steht unter
     <a href="/admin#laeufe">Admin → Letzte Scans</a> als Lauf „aktualisierung“.</li>
   <li><strong>Abbruchsicherung:</strong> liefert eine Archivquelle {{ breaker }}-mal in Folge nichts (z. B. weil sich
     eine URL geändert hat), werden ihre restlichen Aufgaben gestoppt und im Admin-Bereich angezeigt.</li>
@@ -111,18 +112,48 @@ Einstellungen werden direkt aus dem laufenden Programm erzeugt und sind daher im
 (damit sie nicht erneut geprüft werden), erscheinen aber in keinem Thema.</p>
 
 <h2 id="themen">5. Themenbildung</h2>
-<p>Ein Thema ist eine konkrete Nachrichtengeschichte (z. B. „Werksschließungen angekündigt“), kein Dauer-Oberthema.
-Für jede neue Meldung werden die Wörter von Titel (doppelt gewichtet) und Teaser normalisiert und auf Wortstämme
-gekürzt. Allgemeine Wörter wie „VW“, „Konzern“, „Autobauer“ zählen nicht. Dann vergleicht das System sie mit allen
-Themen, deren Meldungen höchstens {{ cfg('cluster_window_days') }} Tage entfernt liegen (TF-IDF-Kosinus-Ähnlichkeit,
-0 bis 1). Ab {{ cfg('cluster_threshold') }} wird die Meldung dem ähnlichsten Thema zugeordnet, sonst entsteht ein neues.</p>
+<p>Ein Thema ist eine konkrete Nachrichtengeschichte (z. B. „Vorstellung des ID.Tiguan“ oder „Rückruf von ID.3 und
+ID.4 wegen Batterien“), kein Dauer-Oberthema. Meldungen verschiedener Medien zur selben Geschichte sollen in
+<em>einem</em> Thema landen, auch wenn jedes Medium anders formuliert.</p>
+<h3>Aus Titel und Teaser wird ein Begriffsprofil</h3>
+<ul>
+  <li><strong>Wendungen und Synonyme</strong> werden vereinheitlicht: „streicht Jobs“, „Stellenabbau“ und
+    „Arbeitsplätze fallen weg“ ergeben dieselben Begriffe <em>Stellen</em> + <em>Abbau</em>; „stellt vor“, „zeigt“,
+    „enthüllt“, „Weltpremiere“, „Sitzprobe“ ergeben <em>Präsentation</em>; „ruft … zurück“ und „Rückruf“ ergeben
+    <em>Rückruf</em>; „Elfer“ ergibt <em>911</em>.</li>
+  <li><strong>Komposita</strong> werden zerlegt: „Gewinneinbruch“ → Gewinn + Einbruch, „Renditeprognose“ → Rendite +
+    Prognose.</li>
+  <li><strong>Modellnamen</strong> (ID.Tiguan, ID.3, 911, Taycan, Elroq …), <strong>Kennzahlen</strong> (35.000, 711 PS)
+    und Eigennamen zählen stärker; allgemeine Wörter wie „VW“, „Konzern“, „Autobauer“ zählen nicht.</li>
+  <li>Der Titel zählt doppelt; seltene Begriffe zählen mehr als häufige (TF-IDF).</li>
+</ul>
+<h3>Zuordnung</h3>
+<p>Eine neue Meldung wird mit allen Themen verglichen, deren Meldungen höchstens {{ cfg('cluster_window_days') }} Tage
+entfernt liegen. Die Ähnlichkeit (0 bis 1) setzt sich zusammen aus der ähnlichsten einzelnen Meldung des Themas
+(70 %) und dem Gesamtprofil des Themas (30 %). Abschläge gibt es, wenn sich die Meldungen widersprechen:</p>
+<ul>
+  <li>verschiedene Modelle und keines gemeinsam (Golf/Tiguan vs. ID.3/ID.4) – zwei Rückrufe derselben Woche bleiben getrennt,</li>
+  <li>verschiedene Konzernmarken im Titel (VW-Quartalszahlen vs. Porsche-Prognose; Cupra Raval vs. ID.Polo),</li>
+  <li>nur ein einziger gemeinsamer Begriff (z. B. nur „Rückruf“).</li>
+</ul>
+<p>Ab <strong>{{ cfg('cluster_threshold') }}</strong> wird die Meldung dem ähnlichsten Thema zugeordnet, sonst entsteht ein
+neues. Ähnelt eine Meldung zwei bestehenden Themen deutlich, werden diese <strong>zusammengeführt</strong> – so wachsen
+Themen auch dann zusammen, wenn erst eine spätere Meldung die Verbindung zeigt. Ist eine KI eingerichtet, entscheidet
+sie bei nicht eindeutigen Fällen (siehe <a href="#ki">KI-Analyse</a>).</p>
+<p>Geprüft wird das Verfahren mit einem Satz realistischer Meldungen (unter anderem Vorstellungen von 911 und
+ID.Tiguan, zeitgleiche Rückrufe, Quartalszahlen von VW und Porsche in derselben Woche, eine IAA-Woche mit fünf
+Fahrzeugvorstellungen): Meldungen verschiedener Geschichten werden dort nicht vermischt, zusammengehörige zu über 90 %
+gebündelt.</p>
 <ul>
   <li><strong>Kurzthema</strong>: Titel der frühesten Meldung (mit KI: vom Modell formuliert).</li>
   <li><strong>Abstract</strong>: Teaser der frühesten Meldung mit Teaser, auf etwa zwei Sätze gekürzt (mit KI: 2–3 Sätze vom Modell).</li>
   <li><strong>Erstes Datum</strong>: früheste Veröffentlichung einer zugehörigen Meldung. <strong>Erfasst</strong>: wann nnign das Thema angelegt hat.</li>
   <li><strong>Quellen</strong>: je Medium die früheste Meldung, höchstens {{ cfg('max_sources_per_topic') }}.</li>
 </ul>
-<p>Falsch zusammengefasste Themen lassen sich auf der Themenseite trennen („abtrennen“) oder per Themen-ID zusammenführen.</p>
+<p>Falsch zusammengefasste Themen lassen sich auf der Themenseite trennen („abtrennen“) oder per Themen-ID
+zusammenführen. „Themen neu bündeln“ im Admin-Bereich ordnet alle automatisch gebildeten Themen mit dem aktuellen
+Verfahren und der aktuellen Schwelle neu; von Hand bearbeitete, gesperrte und KI-Themen bleiben erhalten. Nach einem
+Update mit verbessertem Verfahren geschieht das beim Neustart automatisch.</p>
 
 <h2 id="sprachen">6. Fremdsprachige Quellen und Übersetzung</h2>
 <p>Neben deutschen Medien wertet nnign auch englischsprachige (z. B. Reuters, Bloomberg, Automotive News, Caixin Global,
@@ -391,6 +422,8 @@ negative nach unten. Solange der Historie-Abruf läuft, ist die Historie unvolls
   <tr><td>Neu initialisieren</td><td>löscht alle erfassten Daten und startet einen neuen Initial-Scan; wahlweise mit
     Werkseinstellungen (Standard-Zeitraum vier Wochen, Standard-Quellen; das Admin-Passwort bleibt). Bestätigung durch Eintippen von LÖSCHEN.</td></tr>
   <tr><td>Bewertungen neu berechnen</td><td>wendet geänderte Bewertungsregeln auf den Bestand an.</td></tr>
+  <tr><td>Themen neu bündeln</td><td>ordnet alle Meldungen automatisch gebildeter Themen neu zu (z. B. nach
+    geänderter Ähnlichkeitsschwelle); manuelle, gesperrte und KI-Themen bleiben.</td></tr>
   <tr><td>Übersetzung testen / Jetzt nachübersetzen</td><td>prüft den eingerichteten Übersetzer bzw. übersetzt noch
     nicht übersetzte fremdsprachige Meldungen sofort.</td></tr>
 </tbody></table>

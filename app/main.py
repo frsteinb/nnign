@@ -29,7 +29,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.3.2"
+VERSION = "1.4.0"
 
 
 # ====================================================================== Admin-Passwort
@@ -372,6 +372,12 @@ def activity() -> list[dict]:
         out.append({"kind": "reclassify", "title": "Bewertungen werden neu berechnet",
                     "phase": "nach geänderten Regeln" if not st.get("reclassify") else "läuft …", "detail": "",
                     "pct": None})
+    if st.get("regroup") or config.state_get("pending_regroup"):
+        rg = st.get("regroup") or {}
+        out.append({"kind": "regroup", "title": "Themen werden neu gebündelt",
+                    "phase": "verbessertes Verfahren der Themenbildung" if not rg.get("total") else
+                    f"{rg.get('done', 0)} von {rg['total']} Meldungen neu zugeordnet",
+                    "detail": "", "pct": _pct(rg.get("done", 0), rg["total"]) if rg.get("total") else None})
     if st.get("translate"):
         out.append({"kind": "translate", "title": "Nachübersetzung",
                     "phase": f"{st['translate']['n']} fremdsprachige Meldungen", "detail": "", "pct": None})
@@ -763,6 +769,15 @@ def admin_reclassify(_=Depends(require_admin)):
     threading.Thread(target=pipeline.reclassify, name="reclassify", daemon=True).start()
     return back("Bewertungen werden neu berechnet (Regeln; KI- und manuell bewertete Themen bleiben). "
                 "Dauer: Sekunden bis wenige Minuten.")
+
+
+@app.post("/admin/regroup")
+def admin_regroup(_=Depends(require_admin)):
+    if pipeline.STATUS.get("regroup"):
+        return back("Neu-Bündelung läuft bereits")
+    threading.Thread(target=pipeline.regroup, name="regroup", daemon=True).start()
+    return back("Themen werden neu gebündelt (von Hand bearbeitete, gesperrte und KI-Themen bleiben). "
+                "Fortschritt auf der Startseite.")
 
 
 @app.post("/admin/llm-test")
