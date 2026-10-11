@@ -290,14 +290,12 @@ SETTINGS: list[Setting] = [
             "Leer = Standard des Anbieters. Bei Azure der Endpoint (https://<name>.openai.azure.com, "
             "alternativ AZURE_OPENAI_ENDPOINT), bei Ollama z. B. http://host.docker.internal:11434/v1. "
             "Umgebungsvariable: LLM_BASE_URL.", "KI", env=["LLM_BASE_URL"]),
-    Setting("llm_fallback_provider", "choice", "", "Ausweich-Anbieter",
-            "Springt ein, wenn der Haupt-Anbieter ein Limit erreicht hat oder gestört ist (z. B. Gemini als Haupt-, "
-            "Groq als Ausweich-Anbieter – beide kostenlos). Leer = keiner. Key in .env unter dem Namen des Anbieters, "
-            "z. B. GROQ_API_KEY.", "KI",
-            ["", "anthropic", "openai", "gemini", "mistral", "groq", "openrouter", "ollama", "openai_compatible"]),
-    Setting("llm_fallback_model", "str", "", "Ausweich-Anbieter: Modell", "", "KI"),
-    Setting("llm_fallback_base_url", "str", "", "Ausweich-Anbieter: Basis-URL",
-            "Nur nötig bei ollama (abweichend), openai_compatible oder eigenen Proxys.", "KI"),
+    Setting("llm_fallbacks", "list", [], "Ausweich-Anbieter (der Reihe nach)",
+            "Springen ein, wenn der Haupt-Anbieter ein Limit erreicht hat oder gestört ist – einer nach dem anderen. "
+            "Eine Zeile je Anbieter: anbieter | modell | basis-url (Modell und URL optional), z. B. "
+            "„groq | openai/gpt-oss-120b“, „mistral | mistral-small-latest“, „ollama | llama3.1“. Anbieter: anthropic, "
+            "openai, gemini, mistral, groq, openrouter, ollama, openai_compatible. Keys in .env unter dem Namen des "
+            "Anbieters (GROQ_API_KEY, MISTRAL_API_KEY …).", "KI"),
     Setting("azure_api_version", "str", "2024-10-21", "Azure: API-Version", "", "KI",
             env=["AZURE_OPENAI_API_VERSION"]),
     Setting("anthropic_api_key", "secret", "", "Anthropic API-Key (alt)",

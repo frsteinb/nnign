@@ -88,8 +88,8 @@ PROVIDERS: dict[str, Provider] = {
 }
 
 
-# Zwei Plätze: „primary“ (eingestellter Anbieter) und „fallback“ (Ausweich-Anbieter, springt ein, wenn der
-# erste ein Limit erreicht hat oder gestört ist). Welcher Platz gerade gilt, steht je Thread in _slot.
+# Plätze: „primary“ (eingestellter Anbieter) und „fb1“, „fb2“ … (Ausweich-Anbieter in Reihenfolge; springen ein,
+# wenn die vorigen ein Limit erreicht haben oder gestört sind). Welcher Platz gerade gilt, steht je Thread in _slot.
 _slot = threading.local()
 
 
@@ -113,18 +113,61 @@ def using(slot: str) -> _Using:
     return _Using(slot)
 
 
+def migrate_settings() -> None:
+    """Frühere Einzel-Einstellung „Ausweich-Anbieter“ in die Liste übernehmen."""
+    from . import db
+    rows = {r["key"]: json.loads(r["value"]) for r in db.query(
+        "SELECT key, value FROM settings WHERE key IN ('llm_fallback_provider','llm_fallback_model','llm_fallback_base_url')")}
+    if not rows:
+        return
+    if rows.get("llm_fallback_provider") and not config.get("llm_fallbacks"):
+        line = " | ".join([rows["llm_fallback_provider"], rows.get("llm_fallback_model", ""),
+                           rows.get("llm_fallback_base_url", "")]).rstrip(" |")
+        config.set("llm_fallbacks", [line])
+    with db.tx() as conn:
+        conn.execute("DELETE FROM settings WHERE key IN ('llm_fallback_provider','llm_fallback_model','llm_fallback_base_url')")
+
+
+def fallbacks() -> list[tuple[str, str, str]]:
+    """Ausweich-Anbieter in Reihenfolge, aus Zeilen „anbieter | modell | basis-url“ (Modell/URL optional)."""
+    out = []
+    for line in config.get("llm_fallbacks") or []:
+        parts = [p.strip() for p in line.split("|")]
+        if parts and parts[0] in PROVIDERS:
+            out.append((parts[0], parts[1] if len(parts) > 1 else "", parts[2] if len(parts) > 2 else ""))
+    return out
+
+
+def slots() -> list[str]:
+    return ["primary"] + [f"fb{i + 1}" for i in range(len(fallbacks()))]
+
+
+def _fb() -> tuple[str, str, str] | None:
+    slot = current_slot()
+    if slot == "primary":
+        return None
+    try:
+        return fallbacks()[int(slot[2:]) - 1]
+    except (ValueError, IndexError):
+        return ("", "", "")
+
+
+def slot_label(slot: str) -> str:
+    return "Haupt-Anbieter" if slot == "primary" else f"Ausweich-Anbieter {slot[2:]}"
+
+
 def provider_name() -> str:
-    if current_slot() == "fallback":
-        name = config.get("llm_fallback_provider")
-        return name if name in PROVIDERS else ""
+    fb = _fb()
+    if fb is not None:
+        return fb[0]
     name = config.get("llm_provider")
     return name if name in PROVIDERS else "anthropic"
 
 
 def model() -> str:
-    if current_slot() == "fallback":
-        name = provider_name()
-        return (config.get("llm_fallback_model") or "").strip() or (PROVIDERS[name].default_model if name else "")
+    fb = _fb()
+    if fb is not None:
+        return fb[1] or (PROVIDERS[fb[0]].default_model if fb[0] else "")
     return (config.get("llm_model") or "").strip() or PROVIDERS[provider_name()].default_model
 
 
@@ -144,7 +187,9 @@ def api_key() -> str:
 
 
 def base_url() -> str:
-    url = (config.get("llm_base_url" if current_slot() == "primary" else "llm_fallback_base_url") or "").strip()
+    fb = _fb()
+    url = (config.get("llm_base_url") if fb is None else fb[2]) or ""
+    url = url.strip()
     name = provider_name()
     if not name:
         return ""
@@ -172,25 +217,32 @@ def missing() -> str:
     return ""
 
 
+def _usable_slots() -> list[str]:
+    out = []
+    for slot in slots():
+        with using(slot):
+            if not missing():
+                out.append(slot)
+    return out
+
+
 def available() -> bool:
-    """Eingerichtet (Haupt- oder Ausweich-Anbieter)."""
-    if not missing():
-        return True
-    with using("fallback"):
-        return not missing()
+    """Eingerichtet (Haupt- oder ein Ausweich-Anbieter)."""
+    return bool(_usable_slots())
 
 
 def fallback_configured() -> bool:
-    with using("fallback"):
-        return not missing()
+    return any(s != "primary" for s in _usable_slots())
 
 
 def describe() -> str:
     reason = missing()
-    fb = ""
-    if fallback_configured():
-        with using("fallback"):
-            fb = f" · Ausweich: {provider_name()} · {model()}"
+    names = []
+    for slot in _usable_slots():
+        if slot != "primary":
+            with using(slot):
+                names.append(f"{provider_name()} · {model()}")
+    fb = (" · Ausweich: " + ", ".join(names)) if names else ""
     if reason:
         return f"inaktiv ({reason}) – regelbasiert" + fb
     return f"aktiv: {provider_name()} · {model()}" + fb
@@ -224,15 +276,21 @@ def budget_left() -> int:
 # Meldungen, die in der Pause eingehen, werden später automatisch von der KI nachbewertet.
 
 _pause = {"until": 0.0, "reason": "", "fails": 0}
-_pauses = {"primary": _pause, "fallback": {"until": 0.0, "reason": "", "fails": 0}}
+_pauses = {"primary": _pause}
 
 
 def _p() -> dict:
-    return _pauses[current_slot()]
+    return _pauses.setdefault(current_slot(), {"until": 0.0, "reason": "", "fails": 0})
 
 
 def _pause_key() -> str:
-    return "llm_pause" if current_slot() == "primary" else "llm_pause_fallback"
+    return "llm_pause" if current_slot() == "primary" else f"llm_pause_{_slot_id()}"
+
+
+def _slot_id() -> str:
+    """Stabile Kennung eines Ausweich-Platzes (Anbieter + Modell), damit Pausen beim Umsortieren passen."""
+    fb = _fb() or ("", "", "")
+    return f"{fb[0]}_{fb[1]}".replace(" ", "")
 
 
 class _LastProblem(logging.Handler):
@@ -275,7 +333,7 @@ KINDS = {"ok": "Antwort erhalten", "limit": "Limit erreicht", "auth": "Zugriff v
 def _record(kind: str, detail: str = "", http: int | None = None) -> None:
     """Letzte Antwort des aktuellen Anbieters merken (bleibt über Neustarts erhalten, für Test und Status)."""
     from . import db
-    key = "llm_last_result" if current_slot() == "primary" else "llm_last_result_fallback"
+    key = "llm_last_result" if current_slot() == "primary" else f"llm_last_result_{_slot_id()}"
     if kind == "ok":
         prev = config.state_get(key) or {}
         if prev.get("kind") == "ok" and time.time() - prev.get("ts", 0) < 60:
@@ -285,7 +343,10 @@ def _record(kind: str, detail: str = "", http: int | None = None) -> None:
 
 
 def last_result(slot: str = "primary") -> dict | None:
-    return config.state_get("llm_last_result" if slot == "primary" else "llm_last_result_fallback")
+    if slot == "primary":
+        return config.state_get("llm_last_result")
+    with using(slot):
+        return config.state_get(f"llm_last_result_{_slot_id()}")
 
 
 def describe_result(r: dict | None) -> str:
@@ -395,7 +456,7 @@ def choose_slot() -> str | None:
     """Welcher Anbieter jetzt arbeiten kann: Haupt-Anbieter, sonst Ausweich-Anbieter, sonst keiner."""
     if not _budget_ok():
         return None
-    for slot in ("primary", "fallback"):
+    for slot in slots():
         with using(slot):
             if _slot_ready():
                 return slot
@@ -415,14 +476,15 @@ def blocked_reason() -> str:
         return f"Tageslimit erreicht – weiter ab {_local(_next_utc_midnight())} Uhr"
     if choose_slot():
         return ""
-    until = paused_until() if not missing() else 0.0
-    if until:
-        return f"pausiert bis {_local(until)} Uhr ({_pause['reason']})"
-    with using("fallback"):
-        fu = paused_until() if not missing() else 0.0
-        reason = _p()["reason"]
-    if fu:
-        return f"pausiert bis {_local(fu)} Uhr ({reason})"
+    soonest = None
+    for slot in _usable_slots():
+        with using(slot):
+            until = paused_until()
+            if until and (soonest is None or until < soonest[0]):
+                soonest = (until, _p()["reason"], slot)
+    if soonest:
+        more = " – alle Anbieter" if len(_usable_slots()) > 1 else ""
+        return f"pausiert bis {_local(soonest[0])} Uhr ({soonest[1]}{more})"
     return ""
 
 
@@ -819,10 +881,12 @@ def _test_slot() -> str:
 
 
 def test_connection() -> str:
-    """Für den Admin-Button: kleiner Testaufruf beim Haupt- und ggf. beim Ausweich-Anbieter."""
+    """Für den Admin-Button: kleiner Testaufruf bei jedem eingerichteten Anbieter."""
     main = _test_slot()
-    if not fallback_configured():
+    if not fallbacks():
         return main[0].upper() + main[1:] if main.startswith("nicht") else main
-    with using("fallback"):
-        fb = _test_slot()
-    return f"Haupt-Anbieter: {main} · Ausweich-Anbieter: {fb}"
+    parts = [f"Haupt-Anbieter: {main}"]
+    for slot in slots()[1:]:
+        with using(slot):
+            parts.append(f"{slot_label(slot)} ({provider_name()}): {_test_slot()}")
+    return " · ".join(parts)

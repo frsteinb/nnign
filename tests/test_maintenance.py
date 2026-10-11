@@ -220,30 +220,42 @@ def test_list_models(env):
     assert llm.list_models() == (["embedding-1", "gemini-x-flash"], "")
 
 
-def test_fallback_provider_takes_over_on_limit(env):
+def test_fallback_providers_take_over_in_order(env):
     from app import config, llm, maintenance
     _setup(env)
     primary = _openai_mock(env, lambda b: (429, {"error": "limit"}))
-    fb_calls = []
-
-    def fb(body, headers):
-        fb_calls.append(body)
-        return _answer(GOOD)
-    env.post_routes["/fb/v1/chat/completions"] = fb
-    config.set("llm_fallback_provider", "groq")
-    config.set("llm_fallback_model", "gpt-oss-test")
-    config.set("llm_fallback_base_url", env.base + "/fb/v1")
-    os.environ["GROQ_API_KEY"] = "gsk_test"
-    assert llm.fallback_configured() and "Ausweich: groq" in llm.describe()
-    r1 = llm.analyze({"title": "VW", "summary": "", "source": "x", "published": ""}, [])
-    assert r1 is None and len(primary) == 1 and llm.pause_info("primary")[0]   # Haupt-Anbieter pausiert
-    r2 = llm.analyze({"title": "VW", "summary": "", "source": "x", "published": ""}, [])
-    assert r2 and r2["sentiment"] == "negativ" and len(fb_calls) == 1 and len(primary) == 1
-    assert fb_calls[0]["model"] == "gpt-oss-test"
+    fb1_calls, fb2_calls = [], []
+    env.post_routes["/fb1/v1/chat/completions"] = lambda b, h: (fb1_calls.append(b) or (429, {"error": {"message": "per day"}}))
+    env.post_routes["/fb2/v1/chat/completions"] = lambda b, h: (fb2_calls.append(b) or _answer(GOOD))
+    config.set("llm_fallbacks", [f"groq | gpt-oss-test | {env.base}/fb1/v1", f"mistral | small | {env.base}/fb2/v1",
+                                 "unbekannt | x"])
+    os.environ["GROQ_API_KEY"] = "gsk"
+    os.environ["MISTRAL_API_KEY"] = "ms"
+    assert llm.slots() == ["primary", "fb1", "fb2"]                     # unbekannte Zeile ignoriert
+    assert "Ausweich: groq · gpt-oss-test, mistral · small" in llm.describe()
+    art = {"title": "VW", "summary": "", "source": "x", "published": ""}
+    assert llm.analyze(art, []) is None and len(primary) == 1             # Haupt-Anbieter: Limit
+    assert llm.analyze(art, []) is None and len(fb1_calls) == 1          # Ausweich 1: Tageskontingent
+    r = llm.analyze(art, [])
+    assert r and len(fb2_calls) == 1 and fb2_calls[0]["model"] == "small"
+    assert llm.pause_info("fb1")[1] == "Tageskontingent des Anbieters erschöpft"
     assert llm.ready() and llm.blocked_reason() == ""
     t = llm.test_connection()
-    assert "Haupt-Anbieter: pausiert" in t and "Ausweich-Anbieter: OK" in t
-    assert maintenance.rerate_batch() >= 1 and len(primary) == 1           # Nachbewertung über Ausweich
+    assert "Haupt-Anbieter: pausiert" in t and "Ausweich-Anbieter 1 (groq): pausiert" in t and "Ausweich-Anbieter 2 (mistral): OK" in t
+    assert maintenance.rerate_batch() >= 1 and len(primary) == 1
+    row = next(j for j in maintenance.jobs() if j["key"] == "llm")
+    assert "Ausweich-Anbieter 1: letzte Antwort Limit erreicht" in row["details"]
+
+
+def test_old_single_fallback_setting_is_migrated(env):
+    import json as _json
+    from app import config, db, llm
+    with db.tx() as conn:
+        conn.execute("INSERT INTO settings(key, value) VALUES('llm_fallback_provider', ?)", (_json.dumps("groq"),))
+        conn.execute("INSERT INTO settings(key, value) VALUES('llm_fallback_model', ?)", (_json.dumps("m1"),))
+    llm.migrate_settings()
+    assert config.get("llm_fallbacks") == ["groq | m1"]
+    assert not db.query_one("SELECT 1 FROM settings WHERE key='llm_fallback_provider'")
 
 
 def test_zeroshot_covers_while_llm_paused(env):
@@ -277,7 +289,7 @@ def test_gemini_daily_quota_is_remembered_and_shown(env):
     t2 = llm.test_connection()
     assert "pausiert bis" in t2 and "Tageskontingent" in t2 and "Quota exceeded" in t2
     row = next(j for j in maintenance.jobs() if j["key"] == "llm")
-    assert row["state"] == "limit" and "letzte Antwort: Limit erreicht (HTTP 429)" in row["details"]
+    assert row["state"] == "limit" and "Haupt-Anbieter: letzte Antwort Limit erreicht (HTTP 429)" in row["details"]
 
 
 def test_minute_limit_uses_retry_delay_and_empty_answer_is_explained(env):

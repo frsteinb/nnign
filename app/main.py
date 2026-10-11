@@ -119,6 +119,7 @@ async def lifespan(app: FastAPI):
     db.init_db()
     changes = sources.seed_sources()
     pipeline.ensure_default_period()
+    llm.migrate_settings()
     pipeline.upgrade_on_start(changes)
     maintenance.check(startup=True)
     init_admin_password()
