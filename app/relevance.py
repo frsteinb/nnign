@@ -51,6 +51,9 @@ class Matcher:
             inc += list(config.get("keywords_brands"))
         return cls(_compile(inc), _compile(config.get("keywords_exclude")), int(config.get("min_summary_hits")))
 
+    def excluded(self, title: str) -> bool:
+        return self.exclude is not None and bool(self.exclude.search(title or ""))
+
     def score(self, title: str, summary: str) -> int:
         """0 = irrelevant; >0 = Anzahl Treffer (Titeltreffer zählen dreifach)."""
         if self.include is None:

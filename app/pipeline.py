@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-from . import config, db, fetcher, llm, sentiment, topics, translate
+from . import config, db, fetcher, hubs, llm, sentiment, topics, translate
 from .fetcher import FetchError, Item
 from .relevance import Matcher
 from .sources import all_sources, feeds_of
@@ -59,7 +59,8 @@ class Ctx:
 # ====================================================================== Verarbeitung
 
 def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | None = None,
-           fetch_details: bool = False, max_age_days: int | None = None, progress: dict | None = None) -> None:
+           fetch_details: bool = False, max_age_days: int | None = None, progress: dict | None = None,
+           _depth: int = 0) -> None:
     """Neue, relevante Meldungen speichern und Themen zuordnen.
     progress: optionales Status-Dict (STATUS["scan"] bzw. STATUS["backfill"]) für die Live-Anzeige."""
     progress = progress if progress is not None else {}
@@ -69,8 +70,9 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
     window = int(config.get("cluster_window_days"))
     threshold = float(config.get("cluster_threshold"))
 
-    # 1. Zeitraum, Relevanz (billig) und Dubletten innerhalb des Abrufs
+    # 1. Zeitraum, Relevanz (billig) und Dubletten innerhalb des Abrufs; Übersichtsseiten beiseitelegen
     fresh: dict[tuple, Item] = {}
+    hub_items: list[Item] = []
     for it in items:
         it.url = normalize_url(it.url)
         if max_age_days is not None and (now - it.published).days > max_age_days:
@@ -79,7 +81,12 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
             continue
         if it.published > now + timedelta(hours=6):
             it.published = now
-        if matcher.score(it.title, it.summary) <= 0:
+        if hubs.is_hub(it.title, it.url):
+            if _depth == 0 and matcher.score(it.title, it.summary) > 0:
+                hub_items.append(it)
+            continue
+        if matcher.score(it.title, it.summary) <= 0 and not (it.extra.get("hub_relevant")
+                                                              and not matcher.excluded(it.title)):
             continue
         # Quellsprache als Vorgabe, der Text selbst entscheidet (z. B. englische Meldung einer DE-Quelle)
         it.lang = detect_lang(f"{it.title} {it.summary}", default=it.lang or "de")
@@ -88,6 +95,7 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
         if prev is None or (not prev.summary and it.summary):
             fresh[key] = it
     if not fresh:
+        _expand_hubs(hub_items, ctx, allow_llm, http, max_age_days, progress, _depth)
         return
 
     # 2. Bereits bekannte Meldungen aussortieren
@@ -97,17 +105,40 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                         (it.url, tkey, dom)):
             continue
         new_items.append(it)
-    ctx.candidates += len(new_items)
     if not new_items:
+        _expand_hubs(hub_items, ctx, allow_llm, http, max_age_days, progress, _depth)
         return
 
-    # 3. Details nachladen (Archivtreffer ohne Teaser)
-    if fetch_details and http is not None:
-        need = [it for it in new_items if it.needs_details and not it.summary]
+    # 3. Details nachladen (Archivtreffer ohne Teaser, Artikel aus Übersichtsseiten)
+    forced = any(it.extra.get("hub") for it in new_items)
+    if (fetch_details or forced) and (http is not None or forced):
+        own_http = http is None
+        http = http or fetcher.Http()
+        need = [it for it in new_items if it.needs_details and not it.summary and (fetch_details or it.extra.get("hub"))]
         if need:
             with ThreadPoolExecutor(max_workers=3) as pool:
                 list(pool.map(lambda x: fetcher.enrich(http, x), need))
-            new_items = [it for it in new_items if matcher.score(it.title, it.summary) > 0]
+            kept = []
+            for it in new_items:
+                if it.extra.get("is_hub"):                       # erst beim Laden als Übersicht erkannt
+                    if _depth == 0:
+                        hub_items.append(it)
+                    continue
+                if it.extra.get("date_required") and not it.extra.get("date_found"):
+                    continue                                       # ohne verlässliches Datum nicht übernehmen
+                if it.extra.get("date_required") and not in_period(it.published.date()):
+                    continue
+                if matcher.score(it.title, it.summary) > 0 or (it.extra.get("hub_relevant")
+                                                                and not matcher.excluded(it.title)):
+                    kept.append(it)
+            new_items = kept
+        if own_http:
+            http.close()
+            http = None
+    ctx.candidates += len(new_items)
+    if not new_items:
+        _expand_hubs(hub_items, ctx, allow_llm, http, max_age_days, progress, _depth)
+        return
 
     new_items.sort(key=lambda x: x.published)
     use_llm = allow_llm and llm.available()
@@ -191,6 +222,29 @@ def ingest(items: list[Item], ctx: Ctx, allow_llm: bool, http: fetcher.Http | No
                     if topic_id:
                         topics.attach(conn, topic_id, vec, pub)
                         topics.refresh(conn, topic_id)
+    _expand_hubs(hub_items, ctx, allow_llm, http, max_age_days, progress, _depth)
+
+
+def _expand_hubs(hub_items, ctx, allow_llm, http, max_age_days, progress, depth) -> None:
+    """Übersichtsseiten laden und ihre Artikel als eigene Meldungen verarbeiten (eine Ebene tief)."""
+    if not hub_items or depth > 0:
+        return
+    own = http is None
+    http = http or fetcher.Http()
+    try:
+        seen = set()
+        for hub in hub_items[:10]:
+            if hub.url in seen:
+                continue
+            seen.add(hub.url)
+            kids = hubs.expand(http, hub, relevant=True)
+            if kids:
+                ctx.log(f"Übersichtsseite „{hub.title[:60]}“: {len(kids)} Artikel-Links")
+                ingest(kids, ctx, allow_llm, http=http, fetch_details=True, max_age_days=max_age_days,
+                       progress=progress, _depth=1)
+    finally:
+        if own:
+            http.close()
 
 
 BRIDGE_MARGIN = 0.04   # so viel über der Schwelle muss eine Meldung auch dem zweiten Thema ähneln

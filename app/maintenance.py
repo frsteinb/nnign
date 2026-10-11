@@ -21,7 +21,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import config, db, llm, sentiment, topics, translate
+from . import config, db, hubs, llm, sentiment, topics, translate
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +70,7 @@ def bases() -> dict:
         "sources": srcs,
         "llm": llm.fingerprint() if llm.available() else "",
         "translate": translate.provider(),
+        "hubs": hubs.VERSION,
     }
 
 
@@ -237,6 +238,13 @@ def check(startup: bool = False) -> list[str]:
             notes.append(f"{len(changed)} neue oder geänderte Quelle(n) – aktueller Zeitraum wird nachgeholt")
         _accept("sources", cur["sources"])
 
+    # Erkennung von Übersichtsseiten neu/verbessert -> gespeicherte Übersichten entfernen und auflösen
+    if cur["hubs"] != old.get("hubs"):
+        n = hub_cleanup() if has_data else 0
+        if n:
+            notes.append(f"{n} gespeicherte Übersichtsseiten erkannt – entfernt, ihre Artikel werden einzeln geladen")
+        _accept("hubs", cur["hubs"])
+
     # Übersetzer neu verfügbar -> Nachübersetzung läuft automatisch (work())
     if cur["translate"] != old.get("translate"):
         if cur["translate"] and has_data:
@@ -328,6 +336,48 @@ def search_replan() -> str:
     n = pipeline.plan_backfill()
     pipeline._wake.set()
     return f"{n} Suchabrufe mit den neuen Begriffen eingeplant"
+
+
+# ---------------------------------------------------------------------------------- Übersichtsseiten
+
+def hub_cleanup() -> int:
+    """Als Meldung gespeicherte Übersichtsseiten entfernen und zum Auflösen vormerken."""
+    from . import pipeline
+    rows = [r for r in db.query(
+        "SELECT a.id, a.url, a.title, a.source_name, a.source_domain, a.published_at, a.lang, a.topic_id "
+        "FROM articles a LEFT JOIN topics t ON t.id=a.topic_id WHERE a.relevant=1 AND "
+        "(t.id IS NULL OR (t.locked=0 AND t.sentiment_origin!='manuell' AND t.manual_group=0))")
+        if hubs.is_hub(r["title"], r["url"])]
+    if not rows:
+        return 0
+    with pipeline._ingest_lock, db.tx() as conn:
+        touched = set()
+        for r in rows:
+            conn.execute("UPDATE articles SET relevant=0, topic_id=NULL WHERE id=?", (r["id"],))
+            if r["topic_id"]:
+                touched.add(r["topic_id"])
+        for tid in touched:
+            topics.rebuild_signature(conn, tid)
+            topics.refresh(conn, tid)
+    queue = config.state_get("pending_hubs") or []
+    queue += [{k: r[k] for k in ("url", "title", "source_name", "source_domain", "published_at", "lang")} for r in rows]
+    config.state_set("pending_hubs", queue[-200:])
+    return len(rows)
+
+
+def expand_pending_hubs(limit: int = 10) -> int:
+    from . import pipeline
+    from .fetcher import Item
+    queue = config.state_get("pending_hubs") or []
+    if not queue:
+        return 0
+    batch, rest = queue[:limit], queue[limit:]
+    config.state_set("pending_hubs", rest)
+    items = [Item(q["url"], q["title"], "", datetime.fromisoformat(q["published_at"]), q["source_name"],
+                  q["source_domain"], "übersicht", lang=q.get("lang") or "de") for q in batch]
+    ctx = pipeline.Ctx("übersicht")
+    pipeline._expand_hubs(items, ctx, True, None, None, None, 0)
+    return len(batch)
 
 
 # ---------------------------------------------------------------------------------- KI-Nachbewertung
@@ -449,6 +499,8 @@ def work() -> None:
     if config.state_get("pending_reclassify") and not pipeline.STATUS["reclassify"]:
         pipeline.reclassify()
         config.state_set("pending_reclassify", False)
+    if config.state_get("pending_hubs"):
+        expand_pending_hubs()
     if translate.provider() and now - _last["translate"] > 300:
         _last["translate"] = now
         if pipeline.translate_pending():

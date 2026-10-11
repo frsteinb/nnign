@@ -119,6 +119,14 @@ CREATE TABLE IF NOT EXISTS runs (
     log          TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS hub_pages (       -- erkannte Übersichtsseiten (keine Artikel)
+    url           TEXT PRIMARY KEY,
+    title         TEXT NOT NULL DEFAULT '',
+    source_domain TEXT NOT NULL DEFAULT '',
+    last_fetch    TEXT NOT NULL,
+    links         INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS admin_sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     token_hash  TEXT NOT NULL UNIQUE,

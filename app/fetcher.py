@@ -340,6 +340,7 @@ def parse_meta(html_text: str) -> dict:
         "title": meta.get("og:title") or meta.get("twitter:title") or "",
         "description": meta.get("og:description") or meta.get("description") or meta.get("twitter:description") or "",
         "published": None,
+        "type": meta.get("og:type", "").lower(),
     }
     for key in ("article:published_time", "date", "datepublished", "dc.date", "dc.date.issued", "pubdate"):
         if meta.get(key):
@@ -369,8 +370,14 @@ def enrich(http: Http, item: Item) -> Item:
     if meta["description"]:
         item.summary = meta["description"]
     pub = meta["published"]
-    if pub and abs((pub - item.published).days) <= 31:
+    if pub and (item.extra.get("any_date") or abs((pub - item.published).days) <= 31):
         item.published = pub
+        item.extra["date_found"] = True
+    from . import hubs
+    if hubs.page_is_hub(meta, resp.text):
+        item.extra["is_hub"] = True
+        item.extra["hub_html"] = resp.text[:600_000]
+        item.extra["hub_base"] = str(resp.url)
     return item
 
 
