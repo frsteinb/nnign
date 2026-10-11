@@ -1,4 +1,6 @@
-# VW-Nachrichtenmonitor
+# nnign – No News Is Good News
+
+Nachrichtenmonitor für den VW-Konzern.
 
 Durchsucht seriöse deutschsprachige Nachrichtenquellen nach Meldungen über den Volkswagen-Konzern,
 fasst sie zu **Nachrichtenthemen** zusammen, bewertet jedes Thema als **positiv** oder **negativ** und
@@ -21,12 +23,12 @@ kommen in eine Datei `.env` neben `docker-compose.yml`; Vorlage: `cp .env.exampl
 Die Daten liegen in `./data`. Ohne Docker Compose:
 
 ```bash
-docker build -t vw-nachrichtenmonitor .
-docker run -d --name vw-news -p 8000:8000 -v "$PWD/data:/data" vw-nachrichtenmonitor
+docker build -t nnign .
+docker run -d --name nnign -p 8000:8000 -v "$PWD/data:/data" nnign
 ```
 
 **Admin-Zugang:** Benutzer `admin`. Ist `ADMIN_PASSWORD` nicht gesetzt, wird beim ersten Start ein
-Passwort erzeugt und im Log ausgegeben (`docker logs vw-nachrichtenmonitor`) sowie in
+Passwort erzeugt und im Log ausgegeben (`docker logs nnign`) sowie in
 `data/admin_password.txt` abgelegt. Es kann unter `/admin` geändert werden.
 
 **Optional – KI-Analyse:** Ein Sprachmodell bewertet dann Relevanz, Themenzuordnung, Kurztitel,
@@ -100,7 +102,7 @@ werden nach 15 Fehlschlägen in Folge automatisch gestoppt und im Admin-Bereich 
 
 ## Daten
 
-Alles liegt in einer SQLite-Datei unter `./data/vw_news.sqlite3` (Volume `/data`). Sichern = Datei
+Alles liegt in einer SQLite-Datei unter `./data/nnign.sqlite3` (Volume `/data`). Sichern = Datei
 kopieren. Zurücksetzen = Container stoppen, Datei löschen, starten.
 
 ## Entwicklung

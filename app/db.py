@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.getcwd(), "data"))
-DB_PATH = os.environ.get("DB_PATH", os.path.join(DATA_DIR, "vw_news.sqlite3"))
+DB_PATH = os.environ.get("DB_PATH", os.path.join(DATA_DIR, "nnign.sqlite3"))
 
 _local = threading.local()
 _write_lock = threading.RLock()

@@ -240,7 +240,7 @@ def _headers() -> dict:
         else:
             headers["Authorization"] = f"Bearer {key}"
     if provider_name() == "openrouter":
-        headers["X-Title"] = "VW-Nachrichtenmonitor"
+        headers["X-Title"] = "nnign"
     return headers
 
 

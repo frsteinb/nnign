@@ -1,4 +1,4 @@
-# Bericht: VW-Nachrichtenmonitor – Stand 10.10.2026
+# Bericht: nnign (No News Is Good News) – Stand 10.10.2026
 
 ## Kurzfassung
 
@@ -100,7 +100,7 @@ Der Backfill übersteht Neustarts, weil jede Aufgabe in der Datenbank abgehakt w
 
 ## Erster Start – worauf achten
 
-1. `docker compose up -d --build`, dann `docker logs vw-nachrichtenmonitor` für das Admin-Passwort.
+1. `docker compose up -d --build`, dann `docker logs nnign` für das Admin-Passwort.
 2. Nach ca. 2–5 Minuten ist der Initial-Scan fertig. Unter **/admin → Quellen** sehen Sie je Medium
    „ok“ oder die Fehlermeldung. Bei „HTTP 404“ ist die Feed-URL veraltet: aktuelle URL eintragen.
 3. Unter **/admin → Historischer Backfill je Quelle** nach etwa einer Stunde prüfen: Steht bei einer

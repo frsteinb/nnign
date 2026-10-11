@@ -114,7 +114,7 @@ SETTINGS: list[Setting] = [
             "Das Internet Archive drosselt schnelle Abrufe; daher ein eigener, größerer Abstand.", "Abruf"),
     Setting("request_timeout", "int", 25, "HTTP-Timeout (Sekunden)", "", "Abruf"),
     Setting("user_agent", "str",
-            "Mozilla/5.0 (compatible; VW-Nachrichtenmonitor/1.0; +https://github.com/frsteinb/nnign)",
+            "Mozilla/5.0 (compatible; nnign/1.0; +https://github.com/frsteinb/nnign)",
             "User-Agent", "", "Abruf"),
     # --- Relevanz
     Setting("keywords_strong", "list", DEFAULT_STRONG, "Konzern-Begriffe (Regex, eine pro Zeile)",

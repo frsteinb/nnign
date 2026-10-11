@@ -69,7 +69,7 @@ def check_password(pw: str) -> bool:
     return bool(stored) and hmac.compare_digest(_hash(pw, stored["salt"]), stored["hash"])
 
 
-security = HTTPBasic(realm="VW-Nachrichtenmonitor Admin")
+security = HTTPBasic(realm="nnign Admin")
 
 
 def require_admin(request: Request, creds: HTTPBasicCredentials = Depends(security)) -> str:
@@ -108,12 +108,12 @@ async def lifespan(app: FastAPI):
     init_admin_password()
     if os.environ.get("NNIGN_DISABLE_SCHEDULER") != "1":
         pipeline.start_background()
-    log.info("VW-Nachrichtenmonitor %s gestartet, Daten unter %s", VERSION, db.DB_PATH)
+    log.info("nnign %s gestartet, Daten unter %s", VERSION, db.DB_PATH)
     yield
     pipeline.stop_background()
 
 
-app = FastAPI(title="VW-Nachrichtenmonitor", version=VERSION, lifespan=lifespan)
+app = FastAPI(title="nnign – No News Is Good News", version=VERSION, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 
@@ -326,7 +326,7 @@ def export_csv(request: Request, _=Depends(maybe_public)):
         w.writerow([t["id"], t["created_at"], t["first_published_at"], t["title"], t["abstract"], t["sentiment"],
                     t["sentiment_score"], t["article_count"], *srcs, *[""] * (5 - len(srcs))])
     return Response("﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": "attachment; filename=vw-nachrichtenthemen.csv"})
+                    headers={"Content-Disposition": "attachment; filename=nnign-themen.csv"})
 
 
 # ====================================================================== Admin

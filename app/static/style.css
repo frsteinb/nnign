@@ -41,6 +41,7 @@ h3 { font-size: 16px; margin: 4px 0; }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
        padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .brand { font-weight: 700; color: var(--ink); text-decoration: none; }
+.brand .tagline { font-weight: 400; font-size: 13px; color: var(--muted); margin-left: 8px; }
 .top nav { display: flex; gap: 16px; }
 .top nav a { text-decoration: none; color: var(--ink-2); }
 
@@ -132,6 +133,7 @@ pre.log { white-space: pre-wrap; font-size: 12px; background: var(--bg); padding
   .tile.wide { grid-column: 1 / -1; }
   .grid2 { grid-template-columns: 1fr; }
   .top nav { gap: 12px; }
+  .brand .tagline { display: block; margin-left: 0; }
   .chart-wrap { overflow-x: auto; }
   .chart { min-width: 620px; }
 }

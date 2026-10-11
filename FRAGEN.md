@@ -1,4 +1,4 @@
-# Fragenkatalog zur Verbesserung des VW-Nachrichtenmonitors
+# Fragenkatalog zur Verbesserung von nnign (No News Is Good News)
 
 So nutzen Sie diese Datei: Antworten Sie direkt hinter **Antwort:**. Kreuzen Sie bei Auswahlfragen
 mit `[x]` an. Lassen Sie Fragen leer, wenn die aktuelle Annahme passt. Die aktuelle Annahme steht

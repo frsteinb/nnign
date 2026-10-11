@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}VW-Nachrichtenmonitor{% endblock %}</title>
+<title>{% block title %}nnign – No News Is Good News{% endblock %}</title>
 <link rel="stylesheet" href="/static/style.css?v={{ version }}">
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="/">VW-Nachrichtenmonitor</a>
+  <a class="brand" href="/">nnign <span class="tagline">No News Is Good News · VW-Konzern im Spiegel der Medien</span></a>
   <nav>
     <a href="/">Themen</a>
     <a href="/export.csv">CSV</a>
@@ -19,7 +19,7 @@
 <main>
 {% block content %}{% endblock %}
 </main>
-<footer>VW-Nachrichtenmonitor {{ version }} · Bewertungen sind automatisch erzeugt und können irren.</footer>
+<footer>nnign {{ version }} · Bewertungen sind automatisch erzeugt und können irren.</footer>
 {% block scripts %}{% endblock %}
 </body>
 </html>

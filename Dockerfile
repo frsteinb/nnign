@@ -15,9 +15,9 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # Der Dienst läuft als unprivilegierter Benutzer; das Entrypoint-Skript wechselt nach dem
 # Anpassen der Rechte am Datenverzeichnis dorthin.
-RUN groupadd --system --gid 10001 appuser \
-    && useradd --system --uid 10001 --gid 10001 --home /app appuser \
-    && mkdir -p /data && chown appuser:appuser /data \
+RUN groupadd --system --gid 10001 nnign \
+    && useradd --system --uid 10001 --gid 10001 --home /app nnign \
+    && mkdir -p /data && chown nnign:nnign /data \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 VOLUME ["/data"]
 EXPOSE 8000

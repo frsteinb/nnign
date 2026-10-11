@@ -1,4 +1,4 @@
-# VW-Nachrichtenmonitor
+# nnign – No News Is Good News (Nachrichtenmonitor für den VW-Konzern)
 #
 #   docker compose up -d --build      starten (Weboberfläche: http://localhost:8000)
 #   docker compose logs -f            Protokoll ansehen (enthält beim ersten Start das Admin-Passwort)
@@ -8,11 +8,13 @@
 # Alle NNIGN_*-Werte lassen sich später auch im Admin-Bereich (/admin) ändern; dort gespeicherte
 # Werte haben Vorrang vor diesen Umgebungsvariablen.
 
+name: nnign
+
 services:
-  vw-news:
+  nnign:
     build: .
-    image: vw-nachrichtenmonitor:latest
-    container_name: vw-nachrichtenmonitor
+    image: nnign:latest
+    container_name: nnign
     restart: unless-stopped
     ports:
       - "${PORT:-8000}:8000"
