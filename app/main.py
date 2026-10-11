@@ -122,6 +122,8 @@ async def lifespan(app: FastAPI):
     pipeline.upgrade_on_start(changes)
     maintenance.check(startup=True)
     init_admin_password()
+    if config.purge_stored_secrets():
+        log.warning("Im Admin-Bereich gespeicherte API-Keys wurden entfernt – API-Keys bitte in .env eintragen")
     if os.environ.get("NNIGN_DISABLE_SCHEDULER") != "1":
         pipeline.start_background()
     log.info("nnign %s gestartet, Daten unter %s", VERSION, db.DB_PATH)
@@ -647,7 +649,8 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
             val = "\n".join(val)
         if s.type == "secret":
             val = ("•" * 8 + val[-4:]) if val else ""
-        groups.setdefault(s.group, []).append({"s": s, "value": val, "origin": config.source_of(s.key)})
+        groups.setdefault(s.group, []).append({"s": s, "value": val, "origin": config.source_of(s.key),
+                                               "env": config.env_names(s)[0]})
     runs = db.query("SELECT id, kind, started_at, finished_at, status, fetched, candidates, new_articles, "
                     "new_topics, llm_calls FROM runs ORDER BY id DESC LIMIT 25")
     failed = db.query("SELECT t.*, s.name FROM backfill_tasks t LEFT JOIN sources s ON s.id=t.source_id "
@@ -679,8 +682,8 @@ async def admin_settings(request: Request, _=Depends(require_admin)):
             new = form.get(s.key) == "on"
         elif s.key in form:
             new = form.get(s.key)
-            if s.type == "secret" and (not new or str(new).startswith("•")):
-                continue
+            if s.type == "secret":
+                continue                      # API-Keys nur über .env
         else:
             continue
         if s.key in TEXT_DEFAULTS and str(new).strip().replace("\r\n", "\n") == TEXT_DEFAULTS[s.key].strip():

@@ -81,11 +81,15 @@ class Mock:
         self.server.shutdown()
 
 
+SECRET_ENVS = ("LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+               "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "GEMINI_API_KEY", "MISTRAL_API_KEY", "OLLAMA_HOST",
+               "DEEPL_API_KEY", "LIBRETRANSLATE_API_KEY", "HF_TOKEN", "HUGGINGFACE_API_KEY")
+
+
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
     mock = Mock()
-    for var in ("LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
-                "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "GEMINI_API_KEY", "MISTRAL_API_KEY", "OLLAMA_HOST"):
+    for var in SECRET_ENVS:
         monkeypatch.delenv(var, raising=False)
     from app import llm as _llm
     _llm._format_level.clear()
@@ -103,11 +107,12 @@ def env(tmp_path, monkeypatch):
     from app import config
     config.set("host_delay_seconds", 0)
     config.set("wayback_delay_seconds", 0)
-    config.reset("anthropic_api_key")
     from app import pipeline
     pipeline._breaker_counts.clear()
     yield mock
     mock.close()
+    for var in SECRET_ENVS:      # von Tests gesetzte Keys wieder entfernen
+        os.environ.pop(var, None)
 
 
 NOW = datetime.now(timezone.utc).replace(microsecond=0)

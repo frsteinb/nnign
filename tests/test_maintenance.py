@@ -28,7 +28,7 @@ def _openai_mock(env, behaviour):
         return behaviour(body)
     env.post_routes["/v1/chat/completions"] = handler
     config.set("llm_provider", "openai")
-    config.set("llm_api_key", "x")
+    os.environ["LLM_API_KEY"] = "x"
     config.set("llm_base_url", env.base + "/v1")
     config.set("llm_model", "test-modell")
     config.set("llm_enabled", True)
@@ -202,7 +202,7 @@ def test_suggestions_ui_for_admin_only(env):
 def test_deepl_quota_pauses_translation(env):
     from app import config, translate
     env.post_routes["/v2/translate"] = lambda b, h: (456, {"message": "Quota exceeded"})
-    config.set("deepl_api_key", "abc:fx")
+    os.environ["DEEPL_API_KEY"] = "abc:fx"
     config.set("deepl_url", env.base + "/v2/translate")
     assert translate.translate_texts(["VW sales rise"], "en") == (None, "")
     assert "Kontingent" in translate.paused_reason() and "pausiert" in translate.describe()

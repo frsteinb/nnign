@@ -41,42 +41,11 @@ services:
     volumes:
       - ./data:/data                                   # SQLite-Datenbank und admin_password.txt
     environment:
+      # Zugangsdaten (API-Keys, Admin-Passwort) und Infrastruktur kommen aus .env (siehe .env.example);
+      # alle übrigen Einstellungen nimmt der Admin im Web-UI unter /admin vor.
       TZ: ${TZ:-Europe/Berlin}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # Leer = Passwort wird beim ersten Start erzeugt, im Log ausgegeben und in ./data abgelegt.
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      # KI-Analyse (optional). Ohne Konfiguration rein regelbasiert. Siehe .env.example.
-      LLM_PROVIDER: ${LLM_PROVIDER:-}        # anthropic (Standard), openai, azure, gemini, mistral, groq,
-                                             # openrouter, ollama, openai_compatible
-      LLM_MODEL: ${LLM_MODEL:-}              # leer = Standard (nur Anthropic); bei Azure: Deployment-Name
-      LLM_API_KEY: ${LLM_API_KEY:-}          # oder anbieterspezifisch, z. B. ANTHROPIC_API_KEY
-      LLM_BASE_URL: ${LLM_BASE_URL:-}        # eigene/kompatible Endpoints, Azure-Endpoint, Ollama-URL
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
-      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
-      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OLLAMA_HOST: ${OLLAMA_HOST:-}
-      # Übersetzung englischer/chinesischer Meldungen ins Deutsche (optional, siehe /doku#sprachen):
-      #   ohne API-Key: COMPOSE_PROFILES=uebersetzung und LIBRETRANSLATE_URL=http://libretranslate:5000 in .env
-      LIBRETRANSLATE_URL: ${LIBRETRANSLATE_URL:-}
-      LIBRETRANSLATE_API_KEY: ${LIBRETRANSLATE_API_KEY:-}
-      DEEPL_API_KEY: ${DEEPL_API_KEY:-}        # Alternative: DeepL (kostenloser Tarif reicht meist)
-      NNIGN_TRANSLATE_PROVIDER: ${NNIGN_TRANSLATE_PROVIDER:-}   # auto | libretranslate | deepl | llm | none
-      # Vorbelegungen (leer = eingebauter Standard)
-      NNIGN_SCAN_INTERVAL_HOURS: ${NNIGN_SCAN_INTERVAL_HOURS:-}
-      NNIGN_COLLECT_SINCE: ${NNIGN_COLLECT_SINCE:-}      # leer = beim Erststart die letzten vier Wochen
-      NNIGN_COLLECT_UNTIL: ${NNIGN_COLLECT_UNTIL:-}
-      NNIGN_BACKFILL_ENABLED: ${NNIGN_BACKFILL_ENABLED:-}
-      NNIGN_PUBLIC_DASHBOARD: ${NNIGN_PUBLIC_DASHBOARD:-}
-      # Nur nötig, wenn der Server ausschließlich über einen Proxy ins Internet kommt:
-      HTTPS_PROXY: ${HTTPS_PROXY:-}
-      HTTP_PROXY: ${HTTP_PROXY:-}
-      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,libretranslate}
     extra_hosts:
       - "host.docker.internal:host-gateway"          # erreicht z. B. ein Ollama auf dem Docker-Host
     logging:
@@ -85,7 +54,8 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Optionaler, freier Übersetzungsserver (kein API-Key). Startet nur mit dem Profil „uebersetzung“:
+  # Optionaler, freier Übersetzungsserver (kein API-Key). Startet nur mit dem Profil „uebersetzung“;
+  # nnign erkennt ihn automatisch unter http://libretranslate:5000.
   #   docker compose --profile uebersetzung up -d   (oder COMPOSE_PROFILES=uebersetzung in .env)
   # Der erste Start lädt die Sprachmodelle (einige 100 MB) und dauert einige Minuten.
   libretranslate:

@@ -87,3 +87,23 @@ def test_brute_force_lock(env):
         r = _login(c)                                                      # auch richtiges Passwort gesperrt
         assert "Fehlversuche" in r.headers["location"]
     auth._failed.clear()
+
+
+def test_api_keys_only_from_env(env):
+    import pytest
+    from app import config, db
+    with pytest.raises(ValueError):
+        config.set("llm_api_key", "sk-geheim")
+    with db.tx() as conn:                                   # Altbestand aus früherer Version
+        conn.execute("INSERT INTO settings(key, value) VALUES('deepl_api_key', '\"alt\"')")
+    assert config.get("deepl_api_key") == ""                # DB-Wert wird nie benutzt
+    os.environ["DEEPL_API_KEY"] = "aus-env:fx"
+    assert config.get("deepl_api_key") == "aus-env:fx" and config.source_of("deepl_api_key") == "env"
+    with _client() as c:                                    # Start entfernt gespeicherte Keys
+        _login(c)
+        page = c.get("/admin").text
+        assert "nur in <code>.env</code>" in page and "DEEPL_API_KEY=…" in page
+        assert 'type="password" name="deepl_api_key"' not in page
+        c.post("/admin/settings", data={"llm_api_key": "sk-neu", "page_size": "33"}, headers=ORIGIN)
+    assert not db.query_one("SELECT 1 FROM settings WHERE key IN ('deepl_api_key', 'llm_api_key')")
+    assert config.get("page_size") == 33

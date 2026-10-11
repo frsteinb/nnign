@@ -1,3 +1,4 @@
+import os
 """Fremdsprachige Quellen, Übersetzung und Abgleich nach einem Image-Update."""
 from datetime import timedelta
 
@@ -90,7 +91,7 @@ def test_deepl_provider(env):
         seen["body"] = body
         return 200, {"translations": [{"text": "Übersetzt: " + t} for t in body["text"]]}
     env.post_routes["/v2/translate"] = handler
-    config.set("deepl_api_key", "abc:fx")
+    os.environ["DEEPL_API_KEY"] = "abc:fx"
     config.set("deepl_url", env.base + "/v2/translate")
     assert translate.provider() == "deepl"
     out, used = translate.translate_texts(["VW sales rise"], "en")
@@ -128,7 +129,7 @@ def test_llm_translate(env):
     env.post_routes["/v1/chat/completions"] = lambda body, h: (200, {"choices": [{"message": {
         "content": json.dumps({"uebersetzungen": ["VW-Absatz steigt"]})}}]})
     config.set("llm_provider", "openai")
-    config.set("llm_api_key", "x")
+    os.environ["LLM_API_KEY"] = "x"
     config.set("llm_base_url", env.base + "/v1")
     config.set("llm_model", "test-modell")
     config.set("llm_enabled", True)

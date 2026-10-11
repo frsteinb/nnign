@@ -1,7 +1,9 @@
 """Konfigurations-Registry.
 
 Rangfolge: im Admin-UI gespeicherter Wert (DB) > Umgebungsvariable NNIGN_<KEY> > Default.
-Alle Einstellungen sind im Admin-Bereich unter /admin editierbar.
+Alle Einstellungen sind im Admin-Bereich unter /admin editierbar – außer API-Keys (Typ „secret“):
+die kommen aus Sicherheitsgründen ausschließlich aus Umgebungsvariablen (.env) und werden nie in der
+Datenbank gespeichert.
 """
 from __future__ import annotations
 
@@ -243,8 +245,8 @@ SETTINGS: list[Setting] = [
             "none = nicht übersetzen, Originaltext anzeigen.", "Übersetzung",
             ["auto", "libretranslate", "deepl", "llm", "none"]),
     Setting("libretranslate_url", "str", "", "LibreTranslate-URL",
-            "Freier Übersetzungsserver ohne API-Key, z. B. http://libretranslate:5000 "
-            "(docker compose --profile uebersetzung up -d). Umgebungsvariable: LIBRETRANSLATE_URL.",
+            "Freier Übersetzungsserver ohne API-Key. Leer = automatisch http://libretranslate:5000, wenn der "
+            "Zusatz-Container läuft (COMPOSE_PROFILES=uebersetzung in .env).",
             "Übersetzung", env=["LIBRETRANSLATE_URL"]),
     Setting("libretranslate_api_key", "secret", "", "LibreTranslate API-Key",
             "Nur für öffentliche Instanzen mit Key-Pflicht nötig. Umgebungsvariable: LIBRETRANSLATE_API_KEY.",
@@ -294,6 +296,9 @@ def parse_value(s: Setting, raw: Any):
 
 def get(key: str):
     s = BY_KEY[key]
+    if s.type == "secret":                       # API-Keys nur aus der Umgebung
+        env = _env_value(s)
+        return env if env is not None else s.default
     row = db.query_one("SELECT value FROM settings WHERE key=?", (key,))
     if row is not None:
         try:
@@ -307,6 +312,8 @@ def get(key: str):
 
 
 def source_of(key: str) -> str:
+    if BY_KEY[key].type == "secret":
+        return "env" if _env_value(BY_KEY[key]) is not None else "default"
     if db.query_one("SELECT 1 FROM settings WHERE key=?", (key,)):
         return "admin"
     return "env" if _env_value(BY_KEY[key]) is not None else "default"
@@ -314,10 +321,24 @@ def source_of(key: str) -> str:
 
 def set(key: str, value) -> None:  # noqa: A001 - bewusst kurz
     s = BY_KEY[key]
+    if s.type == "secret":
+        raise ValueError(f"{s.label} wird nur über die Umgebungsvariable {env_names(s)[0]} gesetzt (.env)")
     value = parse_value(s, value)
     with db.tx() as conn:
         conn.execute("INSERT INTO settings(key, value) VALUES(?, ?) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps(value)))
+
+
+def env_names(s: Setting) -> list[str]:
+    """Umgebungsvariablen einer Einstellung, bevorzugte zuerst."""
+    return [*s.env, "NNIGN_" + s.key.upper()]
+
+
+def purge_stored_secrets() -> int:
+    """Früher im Admin-Bereich gespeicherte API-Keys aus der Datenbank entfernen."""
+    keys = [s.key for s in SETTINGS if s.type == "secret"]
+    with db.tx() as conn:
+        return conn.execute(f"DELETE FROM settings WHERE key IN ({','.join('?' * len(keys))})", keys).rowcount
 
 
 def reset(key: str) -> None:

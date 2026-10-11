@@ -1,3 +1,4 @@
+import os
 import json
 from types import SimpleNamespace
 
@@ -18,9 +19,9 @@ class FakeMessages:
 
 
 def test_llm_path(env, monkeypatch):
-    from app import config, db, llm, pipeline
+    from app import db, llm, pipeline
     setup_world(env)
-    config.set("anthropic_api_key", "sk-test")
+    os.environ["ANTHROPIC_API_KEY"] = "sk-test"
 
     def decide(data):
         title = data["meldung"]["titel"]
@@ -59,7 +60,7 @@ def test_llm_path(env, monkeypatch):
 
 def test_llm_budget_and_refusal(env, monkeypatch):
     from app import config, llm
-    config.set("anthropic_api_key", "sk-test")
+    os.environ["ANTHROPIC_API_KEY"] = "sk-test"
     config.set("llm_max_calls_per_day", 0)
     assert llm.analyze({"title": "x"}, []) is None   # Budget erschöpft
     config.set("llm_max_calls_per_day", 10)

@@ -125,7 +125,8 @@
 
 <section class="card" id="einstellungen">
   <h2>Einstellungen</h2>
-  <p class="muted small">Herkunft: <em>default</em> = eingebaut, <em>env</em> = Umgebungsvariable NNIGN_&lt;NAME&gt;, <em>admin</em> = hier gespeichert (hat Vorrang).</p>
+  <p class="muted small">Herkunft: <em>default</em> = eingebaut, <em>env</em> = Umgebungsvariable, <em>admin</em> = hier gespeichert (hat Vorrang).
+    API-Keys werden aus Sicherheitsgründen nur in der Datei <code>.env</code> eingetragen (danach Container neu starten: <code>docker compose up -d</code>); alles andere hier.</p>
   <form method="post" action="/admin/settings" class="settings">
     {% for group, items in groups.items() %}
       <fieldset><legend>{{ group }}</legend>
@@ -142,7 +143,8 @@
           {% elif s.type == 'choice' %}
             <select id="f-{{ s.key }}" name="{{ s.key }}">{% for c in s.choices %}<option {{ 'selected' if c == it.value }}>{{ c }}</option>{% endfor %}</select>
           {% elif s.type == 'secret' %}
-            <input id="f-{{ s.key }}" type="password" name="{{ s.key }}" value="{{ it.value }}" autocomplete="off">
+            <div class="secret-state" id="f-{{ s.key }}">{% if it.value %}<span class="ok">gesetzt</span> <code>{{ it.value }}</code>
+              {% else %}<span class="muted">nicht gesetzt</span>{% endif %} · nur in <code>.env</code>: <code>{{ it.env }}=…</code></div>
           {% else %}
             <input id="f-{{ s.key }}" name="{{ s.key }}" value="{{ it.value }}" {{ 'inputmode=decimal' if s.type in ('int','float') }}>
           {% endif %}

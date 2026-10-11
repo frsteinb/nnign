@@ -46,13 +46,33 @@ def paused_reason() -> str:
     return _pause["reason"] if _pause["until"] > time.time() else ""
 
 
+AUTO_LT_URL = "http://libretranslate:5000"     # Name des optionalen Containers in docker-compose.yml
+_auto_lt = {"checked": 0.0, "found": False}
+
+
+def libretranslate_url() -> str:
+    """Eingestellte URL oder – falls leer – der automatisch erkannte LibreTranslate-Container."""
+    url = (config.get("libretranslate_url") or "").strip()
+    if url:
+        return url
+    import socket
+    if time.time() - _auto_lt["checked"] > 600:
+        _auto_lt["checked"] = time.time()
+        try:
+            socket.getaddrinfo("libretranslate", 5000)
+            _auto_lt["found"] = True
+        except OSError:
+            _auto_lt["found"] = False
+    return AUTO_LT_URL if _auto_lt["found"] else ""
+
+
 def provider() -> str:
     """Tatsächlich genutzter Anbieter ('' = keiner verfügbar)."""
     choice = config.get("translate_provider")
     if choice == "none":
         return ""
     available = {
-        "libretranslate": bool((config.get("libretranslate_url") or "").strip()),
+        "libretranslate": bool(libretranslate_url()),
         "deepl": bool((config.get("deepl_api_key") or "").strip()),
         "llm": llm.available(),
     }
@@ -80,7 +100,7 @@ def _timeout() -> float:
 
 
 def _libretranslate(texts: list[str], lang: str) -> list[str] | None:
-    url = config.get("libretranslate_url").strip().rstrip("/") + "/translate"
+    url = libretranslate_url().rstrip("/") + "/translate"
     key = (config.get("libretranslate_api_key") or "").strip()
     # Chinesisch heißt je nach LibreTranslate-Version „zh“ oder „zh-Hans“; unbekannter Code -> automatisch
     for source in {"en": ["en", "auto"], "zh": ["zh-Hans", "zh", "auto"]}.get(lang, ["auto"]):
