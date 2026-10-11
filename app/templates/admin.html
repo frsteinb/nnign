@@ -99,12 +99,14 @@
 <section class="card" id="backfill">
   <h2>Historischer Backfill je Quelle</h2>
   <p class="muted small">archive = Archivseiten des Mediums · search = Nachrichtensuche in Zeitfenstern ·
-    wayback_* = Schnappschüsse der Feeds im Internet Archive. Die Reihenfolge ist grob-nach-fein: zuerst ein
+    wayback_* = Schnappschüsse der Feeds im Internet Archive · hub_page = Folgeseiten beobachteter Übersichtsseiten.
+    Der Feinheitsgrad zeigt, wie dicht bisher abgefragt wurde (Fenstergröße der Suche/Archivseiten, Abstand der
+    Schnappschüsse, Seitentiefe); er wird durch Verdichtung und Lückenschluss laufend feiner. Die Reihenfolge ist grob-nach-fein: zuerst ein
     Überblick über alle Jahre, dann zunehmend lückenlos.</p>
   <div class="scroll"><table class="list">
-    <thead><tr><th>Quelle</th><th>Methode</th><th>offen</th><th>ok</th><th>Fehler</th><th>gestoppt</th><th>relevante Treffer</th><th>frühestes erledigtes Datum</th></tr></thead>
+    <thead><tr><th>Quelle</th><th>Methode</th><th>offen</th><th>ok</th><th>Fehler</th><th>gestoppt</th><th>relevante Treffer</th><th>frühestes erledigtes Datum</th><th>Feinheitsgrad</th></tr></thead>
     <tbody>{% for r in st.backfill.per_source %}
-      <tr><td>{{ r.name }}</td><td>{{ r.method }}</td><td>{{ r.offen }}</td><td>{{ r.ok }}</td><td>{{ r.fehler }}</td><td>{{ r.skipped }}</td><td>{{ r.relevant }}</td><td>{{ r.earliest or '–' }}</td></tr>
+      <tr><td>{{ r.name }}</td><td>{{ r.method }}</td><td>{{ r.offen }}</td><td>{{ r.ok }}</td><td>{{ r.fehler }}</td><td>{{ r.skipped }}</td><td>{{ r.relevant }}</td><td>{{ r.earliest or '–' }}</td><td class="small">{{ r.fineness }}</td></tr>
     {% endfor %}</tbody>
   </table></div>
   {% if failed %}

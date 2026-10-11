@@ -666,6 +666,35 @@ def wipe(factory: bool = False) -> None:
     _wake.set()
 
 
+def _days(n: float) -> str:
+    n = max(1, round(n))
+    return "1 Tag" if n == 1 else (f"{n} Tage" if n < 60 else f"{round(n / 30)} Monate")
+
+
+def _fineness(r: dict) -> str:
+    """Erreichter Feinheitsgrad je Quelle und Abrufweg (aus den erledigten Aufgaben)."""
+    m = r.get("method")
+    if not r.get("ok"):
+        return "–"
+    if m == "wayback_index":
+        return "Index der Schnappschüsse geladen"
+    if m == "hub_page":
+        return f"bis Seite {int(r.get('depth_max') or 0) + 1}"
+    if m in ("search", "archive"):
+        txt = f"feinstes Fenster {_days(r['win_min'])}, Ø {_days(r['win_avg'])}"
+        if m == "search":
+            if r.get("depth_max"):
+                txt += f" · {int(r['depth_max'])}× halbiert"
+            if (r.get("queries") or 0) > 1:
+                txt += f" · {r['queries']} Suchanfragen"
+        return txt
+    if m == "wayback_feed" and r.get("earliest") and r.get("latest"):
+        span = (date.fromisoformat(r["latest"][:10]) - date.fromisoformat(r["earliest"][:10])).days + 1
+        n = r.get("days_ok") or 1
+        return f"{n} Schnappschuss-Tage · Ø alle {_days(span / n)}"
+    return "–"
+
+
 def backfill_progress() -> dict:
     rows = db.query("SELECT status, COUNT(*) n FROM backfill_tasks GROUP BY status")
     counts = {r["status"]: r["n"] for r in rows}
@@ -674,7 +703,14 @@ def backfill_progress() -> dict:
     per_method = db.query(
         "SELECT s.name, t.method, SUM(t.status='offen') offen, SUM(t.status='ok') ok, "
         "SUM(t.status='fehler') fehler, SUM(t.status='übersprungen') skipped, SUM(t.relevant) relevant, "
-        "MIN(CASE WHEN t.status='ok' AND t.method!='wayback_index' THEN t.period_start END) earliest "
+        "MIN(CASE WHEN t.status='ok' AND t.method!='wayback_index' THEN t.period_start END) earliest, "
+        "MAX(CASE WHEN t.status='ok' AND t.method!='wayback_index' THEN t.period_start END) latest, "
+        "MIN(CASE WHEN t.status='ok' THEN julianday(t.period_end)-julianday(t.period_start)+1 END) win_min, "
+        "AVG(CASE WHEN t.status='ok' THEN julianday(t.period_end)-julianday(t.period_start)+1 END) win_avg, "
+        "COUNT(DISTINCT CASE WHEN t.status='ok' THEN t.period_start END) days_ok, "
+        "MAX(CASE WHEN t.status='ok' THEN t.depth END) depth_max, "
+        "COUNT(DISTINCT CASE WHEN t.method='search' AND t.status='ok' THEN substr(t.target, 1, instr(t.target, '+site') ) END) "
+        "queries "
         "FROM backfill_tasks t LEFT JOIN sources s ON s.id=t.source_id GROUP BY s.name, t.method ORDER BY s.name")
     open_n = counts.get("offen", 0)
     pct = round(100 * done / total, 1) if total else 0.0
@@ -693,7 +729,7 @@ def backfill_progress() -> dict:
     return {"counts": counts, "total": total, "done": done, "open": open_n, "ok": counts.get("ok", 0),
             "failed": counts.get("fehler", 0), "skipped": counts.get("übersprungen", 0),
             "percent": pct, "state": state, "state_text": text,
-            "per_source": [dict(r) for r in per_method]}
+            "per_source": [{**dict(r), "fineness": _fineness(dict(r))} for r in per_method]}
 
 
 def _run_task(http: fetcher.Http, task, src) -> tuple[list[Item], list[tuple]]:

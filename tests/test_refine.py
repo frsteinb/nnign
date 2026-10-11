@@ -77,3 +77,15 @@ def test_coverage_by_year_and_overview(env):
     with TestClient(main.app) as c:
         page = c.get("/").text
         assert 'class="cov dünn growing"' in page and "nur dünn erfasst" in page and "ergänzt noch" in page
+
+
+def test_fineness_per_source_and_method():
+    from app import pipeline
+    f = pipeline._fineness
+    assert f({"method": "search", "ok": 5, "win_min": 3, "win_avg": 40.2, "depth_max": 5, "queries": 9}) == \
+        "feinstes Fenster 3 Tage, Ø 40 Tage · 5× halbiert · 9 Suchanfragen"
+    assert f({"method": "archive", "ok": 9, "win_min": 1, "win_avg": 1}) == "feinstes Fenster 1 Tag, Ø 1 Tag"
+    assert f({"method": "wayback_feed", "ok": 10, "earliest": "2020-01-01", "latest": "2020-01-30", "days_ok": 10}) == \
+        "10 Schnappschuss-Tage · Ø alle 3 Tage"
+    assert f({"method": "hub_page", "ok": 2, "depth_max": 3}) == "bis Seite 4"
+    assert f({"method": "search", "ok": 0}) == "–"
