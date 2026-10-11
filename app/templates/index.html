@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+{% set st = status %}
+<section class="stats">
+  <div class="tile"><div class="num">{{ st.topics }}</div><div class="lbl">Themen</div></div>
+  <div class="tile"><div class="num"><span class="dot pos"></span>{{ st.positive }}</div><div class="lbl">positiv</div></div>
+  <div class="tile"><div class="num"><span class="dot neg"></span>{{ st.negative }}</div><div class="lbl">negativ</div></div>
+  <div class="tile"><div class="num">{{ st.articles }}</div><div class="lbl">Meldungen</div></div>
+  <div class="tile wide">
+    <div class="lbl">
+      {% if st.scan_running %}<span class="pulse"></span> Scan läuft: {{ st.scan_running.phase }}
+      {% elif not st.initial_done and st.last_run and st.last_run.status == 'fehler' %}<span class="warn">Initial-Scan fehlgeschlagen – keine Quelle erreichbar. Neuer Versuch alle 10 Minuten; Details im Admin-Bereich.</span>
+      {% elif not st.initial_done %}<span class="pulse"></span> Initial-Scan wird vorbereitet …
+      {% else %}Letzter Scan: {{ st.last_run.started_at|dt if st.last_run else '–' }} · nächster: {{ st.next_scan_at|dt }}{% endif %}
+    </div>
+    {% if st.backfill.total %}
+    <div class="lbl">Historischer Backfill: {{ st.backfill.percent }} % ({{ st.backfill.done }} / {{ st.backfill.total }} Aufgaben)
+      {% if st.backfill.percent < 100 %} – Historie noch unvollständig{% endif %}</div>
+    <div class="bar"><div style="width: {{ st.backfill.percent }}%"></div></div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>{% if args.year %}Themen {{ args.year }} nach Monat{% else %}Entwicklung seit {{ timeline[0].key if timeline else '' }}{% endif %}</h2>
+    <div class="legend"><span><span class="dot pos"></span>positiv (nach oben)</span><span><span class="dot neg"></span>negativ (nach unten)</span>
+      {% if args.year %}<a href="{{ qs(year='') }}">alle Jahre</a>{% endif %}</div>
+  </div>
+  {% set n = timeline|length %}
+  {% set w = 760 %}{% set h = 220 %}{% set mid = 110 %}{% set pad = 28 %}
+  {% set step = ((w - pad) / (n if n else 1)) %}
+  {% set bw = [[step - 2, 2]|max, 44]|min %}{% set off = (step - 2 - bw) / 2 %}
+  <div class="chart-wrap">
+  <svg class="chart" viewBox="0 0 {{ w }} {{ h + 18 }}" role="img" aria-label="Positive und negative Themen je Zeitraum">
+    <line class="axis" x1="{{ pad }}" x2="{{ w }}" y1="{{ mid }}" y2="{{ mid }}"/>
+    <text class="tick" x="{{ pad - 4 }}" y="14" text-anchor="end">{{ max_v }}</text>
+    <text class="tick" x="{{ pad - 4 }}" y="{{ mid + 4 }}" text-anchor="end">0</text>
+    <text class="tick" x="{{ pad - 4 }}" y="{{ h - 4 }}" text-anchor="end">{{ max_v }}</text>
+    {% for p in timeline %}
+      {% set x = pad + loop.index0 * step + 1 + off %}
+      {% set hp = (p.pos / max_v) * (mid - 10) %}
+      {% set hn = (p.neg / max_v) * (mid - 10) %}
+      {% set label = p.key[5:] if args.year else p.key %}
+      <a href="{{ qs(year=p.key[:4]) if not args.year else qs(date_from=p.key ~ '-01', date_to=p.key ~ '-31', year=args.year) }}">
+      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neg }} negativ">
+        <rect class="hit" x="{{ x - 1 - off }}" y="0" width="{{ step }}" height="{{ h }}"/>
+        {% if p.pos %}<rect class="pos" x="{{ x }}" y="{{ mid - 1 - hp }}" width="{{ bw }}" height="{{ hp }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
+        {% if p.neg %}<rect class="neg" x="{{ x }}" y="{{ mid + 1 }}" width="{{ bw }}" height="{{ hn }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
+      </g></a>
+      {% if args.year or loop.index0 % ((n // 13) + 1) == 0 or loop.last %}
+      <text class="tick" x="{{ x + bw/2 }}" y="{{ h + 14 }}" text-anchor="middle">{{ label }}</text>
+      {% endif %}
+    {% endfor %}
+  </svg>
+  <div class="tooltip" hidden></div>
+  </div>
+  <details class="table-view"><summary>Als Tabelle</summary>
+    <table><thead><tr><th>Zeitraum</th><th>positiv</th><th>negativ</th></tr></thead><tbody>
+    {% for p in timeline %}<tr><td>{{ p.key }}</td><td>{{ p.pos }}</td><td>{{ p.neg }}</td></tr>{% endfor %}
+    </tbody></table>
+  </details>
+</section>
+
+<form class="filters" method="get" action="/">
+  <input type="search" name="q" value="{{ args.q }}" placeholder="Suche in Themen …" aria-label="Suche">
+  <select name="sentiment" aria-label="Bewertung">
+    <option value="">alle Bewertungen</option>
+    <option value="positiv" {{ 'selected' if args.sentiment == 'positiv' }}>positiv</option>
+    <option value="negativ" {{ 'selected' if args.sentiment == 'negativ' }}>negativ</option>
+  </select>
+  <select name="source" aria-label="Medium">
+    <option value="">alle Medien</option>
+    {% for d in domains %}<option value="{{ d.d }}" {{ 'selected' if args.source == d.d }}>{{ d.n }} ({{ d.c }})</option>{% endfor %}
+  </select>
+  <input type="date" name="date_from" value="{{ args.date_from }}" aria-label="von">
+  <input type="date" name="date_to" value="{{ args.date_to }}" aria-label="bis">
+  {% if args.year %}<input type="hidden" name="year" value="{{ args.year }}">{% endif %}
+  <select name="order" aria-label="Sortierung">
+    <option value="new" {{ 'selected' if order == 'new' }}>neueste zuerst</option>
+    <option value="old" {{ 'selected' if order == 'old' }}>älteste zuerst</option>
+    <option value="size" {{ 'selected' if order == 'size' }}>meiste Meldungen</option>
+    <option value="updated" {{ 'selected' if order == 'updated' }}>zuletzt aktualisiert</option>
+  </select>
+  <button type="submit">Filtern</button>
+  <a class="muted" href="/">zurücksetzen</a>
+</form>
+
+<p class="muted">{{ total }} Themen{% if args.year %} im Jahr {{ args.year }}{% endif %} ·
+  <a href="/export.csv?{{ request.query_params }}">als CSV</a></p>
+
+{% if not items %}
+  <div class="card empty">
+    {% if not st.initial_done or st.scan_running %}
+      Der erste Scan läuft gerade. Die Seite aktualisiert sich automatisch.
+    {% else %}
+      Keine Themen gefunden. Prüfen Sie Filter oder im Admin-Bereich den Status der Quellen.
+    {% endif %}
+  </div>
+{% endif %}
+
+<ul class="topics">
+{% for it in items %}{% set t = it.t %}
+  <li class="topic {{ t.sentiment }}">
+    <div class="meta">
+      <span class="badge {{ t.sentiment }}">{{ '▲' if t.sentiment == 'positiv' else '▼' }} {{ t.sentiment }}</span>
+      <span title="Erstes Erscheinen">erstmals {{ t.first_published_at|d }}</span>
+      {% if t.article_count > 1 %}<span>· {{ t.article_count }} Meldungen bis {{ t.last_published_at|d }}</span>{% endif %}
+      <span class="muted">· erfasst {{ t.created_at|d }}</span>
+    </div>
+    <h3><a href="/thema/{{ t.id }}">{{ t.title }}</a></h3>
+    {% if t.abstract %}<p>{{ t.abstract }}</p>{% endif %}
+    <div class="srcs">
+      {% for a in it.sources %}<a href="{{ a.url }}" target="_blank" rel="noopener noreferrer" title="{{ a.title }}">{{ a.source_name }}</a>{% endfor %}
+    </div>
+  </li>
+{% endfor %}
+</ul>
+
+{% if pages > 1 %}
+<nav class="pager">
+  {% if page > 1 %}<a href="{{ qs(page=page-1) }}">← zurück</a>{% endif %}
+  <span>Seite {{ page }} von {{ pages }}</span>
+  {% if page < pages %}<a href="{{ qs(page=page+1) }}">weiter →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var wrap = document.querySelector('.chart-wrap');
+  if (wrap) {
+    var tip = wrap.querySelector('.tooltip');
+    wrap.querySelectorAll('.col').forEach(function (g) {
+      g.addEventListener('mousemove', function (e) {
+        var r = wrap.getBoundingClientRect();
+        tip.textContent = g.dataset.tip;
+        tip.hidden = false;
+        var x = Math.min(e.clientX - r.left + 12, r.width - tip.offsetWidth - 4);
+        tip.style.left = x + 'px';
+        tip.style.top = (e.clientY - r.top - 34) + 'px';
+      });
+      g.addEventListener('mouseleave', function () { tip.hidden = true; });
+    });
+  }
+  {% if status.scan_running or not status.initial_done %}
+  setTimeout(function () { location.reload(); }, 15000);
+  {% endif %}
+})();
+</script>
+{% endblock %}
