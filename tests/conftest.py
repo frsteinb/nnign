@@ -109,7 +109,12 @@ def env(tmp_path, monkeypatch):
     config.set("wayback_delay_seconds", 0)
     from app import pipeline
     pipeline._breaker_counts.clear()
+    pipeline._per_source.update(at=0.0, rows=None)
+    from app import main as _main
+    _main._overall.clear()
     fetcher._stats.clear()
+    from app import gapfill as _gf
+    _gf._cache.update(at=0.0, data=None)
     yield mock
     mock.close()
     for var in SECRET_ENVS:      # von Tests gesetzte Keys wieder entfernen

@@ -171,6 +171,8 @@ class _World:
             self.fetched.setdefault(refine._feed_of(r["target"]), []).append(date.fromisoformat(r["period_start"][:10]))
         for v in self.fetched.values():
             v.sort()
+        self.search_on = bool(config.get("search_enabled"))
+        self.terms: dict = {}
 
     def wayback(self, src, a: date, b: date) -> list[tuple]:
         if not config.get("backfill_wayback"):
@@ -193,6 +195,14 @@ class _World:
                 bisect.insort(have, d)
                 out.append(("wayback_feed", url, d, d, GAP_PRIORITY, refine.wayback_depth() + 1))
         return out
+
+    def search_count(self, src, a: date, b: date, existing: dict) -> int:
+        """Wie viele Such-Abrufe ständen für diesen Monat noch aus? (gezählt, ohne Adressen zu bauen)"""
+        if not (self.search_on and src["use_search"]):
+            return 0
+        terms = self.terms.setdefault(src["id"], len(_query_terms(src)))
+        windows = math.ceil(((b - a).days + 1) / WINDOW_DAYS)
+        return max(0, terms * windows - existing.get((src["id"], a.strftime("%Y-%m")), 0))
 
     def search(self, src, a: date, b: date) -> list[tuple]:
         if not (config.get("search_enabled") and src["use_search"]):
@@ -273,37 +283,70 @@ def plan_round() -> int:
 
 # ---------------------------------------------------------------------------------- Abschätzung
 
-def estimate(max_age: float = 600) -> dict:
-    """Wie viel ist noch zu tun? Monate, Abrufe, Dauer und Datenverkehr (zwischengespeichert)."""
-    if _cache["data"] is not None and time.time() - _cache["at"] < max_age:
-        return _cache["data"]
+def _compute() -> dict:
     ms = months_state()
     r = rate()
     open_months = [m for m in ms["months"] if m["state"] == "offen"]
     queued = (db.query_one("SELECT COUNT(*) n FROM backfill_tasks t JOIN sources s ON s.id=t.source_id "
                            "WHERE t.status='offen' AND s.enabled=1") or {"n": 0})["n"]
     future = 0
-    conn = db.connect()
-    world = _World(conn) if open_months else None
-    for m in open_months:
-        a, b = _bounds_in_period(m["month"])
-        cand = _retries(conn, m["month"], count_only=True)
-        for src in world.sources:
-            cand += len(world.wayback(src, a, b)) + len(world.search(src, a, b))
-        need = cand
-        if r["yield_per_task"]:
-            need = min(cand, math.ceil((m["target"] - m["articles"]) / max(r["yield_per_task"], 0.02)))
-        m["candidates"] = cand
-        future += need
+    if open_months:
+        conn = db.connect()
+        world = _World(conn)
+        existing = {(row["source_id"], row["m"]): row["n"] for row in conn.execute(
+            "SELECT source_id, substr(period_start,1,7) m, COUNT(*) n FROM backfill_tasks WHERE method='search' "
+            "AND priority=? AND depth=? GROUP BY source_id, m", (GAP_PRIORITY + 1, SEARCH_DEPTH))}
+        day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).replace(microsecond=0).isoformat()
+        retries = {row["m"]: row["n"] for row in conn.execute(
+            "SELECT substr(period_start,1,7) m, COUNT(*) n FROM backfill_tasks WHERE status='fehler' AND attempts<? "
+            "AND (done_at IS NULL OR done_at<?) GROUP BY m", (MAX_ATTEMPTS, day_ago))}
+        for m in open_months:
+            a, b = _bounds_in_period(m["month"])
+            cand = retries.get(m["month"], 0)
+            for src in world.sources:
+                cand += len(world.wayback(src, a, b)) + world.search_count(src, a, b, existing)
+            need = cand
+            if r["yield_per_task"]:
+                need = min(cand, math.ceil((m["target"] - m["articles"]) / max(r["yield_per_task"], 0.02)))
+            m["candidates"] = cand
+            future += need
     tasks = queued + future
-    data = {**ms, "open_months": len(open_months),
+    return {**ms, "open_months": len(open_months),
             "reached": sum(1 for m in ms["months"] if m["state"] == "erreicht"),
             "exhausted": sum(1 for m in ms["months"] if m["state"] == "ausgeschöpft"),
             "queued": queued, "future": future, "tasks": tasks,
             "seconds": tasks * r["sec_per_task"], "bytes": tasks * r["bytes_per_task"],
             "rate": r, "at": time.time()}
+
+
+def refresh(max_age: float = 600) -> bool:
+    """Abschätzung neu berechnen, wenn sie veraltet ist (läuft in der Hintergrundsteuerung, nicht beim Seitenaufruf)."""
+    if _cache["data"] is not None and time.time() - _cache["at"] < max_age:
+        return False
+    data = _compute()
     _cache.update(at=time.time(), data=data)
-    return data
+    try:
+        config.state_set("gapfill_estimate", {k: v for k, v in data.items() if k != "months"} |
+                         {"months": [{k: m[k] for k in ("month", "articles", "target", "state", "ratio")}
+                                     for m in data["months"]]})
+    except Exception:  # Speichern ist nur ein Komfort für den nächsten Start
+        log.debug("Abschätzung nicht gespeichert", exc_info=True)
+    return True
+
+
+def estimate(max_age: float | None = None) -> dict:
+    """Letzte Abschätzung (Monate, Abrufe, Dauer, Datenverkehr). Seitenaufrufe rechnen nicht selbst, sondern nehmen den
+    zuletzt im Hintergrund berechneten Stand; nur ganz ohne Stand (erster Start) wird einmal gerechnet.
+    max_age=0 erzwingt die Neuberechnung (Tests)."""
+    if max_age == 0:
+        refresh(0)
+    if _cache["data"] is None:
+        saved = config.state_get("gapfill_estimate")
+        if saved and saved.get("months") is not None:
+            _cache.update(at=saved.get("at", 0.0), data=saved)
+        else:
+            refresh(0)
+    return _cache["data"]
 
 
 def invalidate() -> None:

@@ -81,8 +81,7 @@ def test_estimate_rates_and_status(env):
     gapfill.record_batch(48.0, 24, 2_400_000, 12, 1.0)
     r = gapfill.rate()
     assert r["sec_per_task"] == 2.0 and r["bytes_per_task"] == 100_000 and r["yield_per_task"] == 0.5
-    gapfill.invalidate()
-    est = gapfill.estimate()
+    est = gapfill.estimate(max_age=0)
     assert est["open_months"] >= 1 and est["tasks"] > 0
     assert est["seconds"] == est["tasks"] * 2.0 and est["bytes"] == est["tasks"] * 100_000
     row = {j["key"]: j for j in maintenance.jobs()}["gapfill"]

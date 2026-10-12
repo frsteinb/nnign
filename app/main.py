@@ -29,7 +29,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.19.2"
+VERSION = "1.19.3"
 
 
 # ====================================================================== Admin-Passwort
@@ -464,6 +464,21 @@ def _args(request: Request) -> dict:
 
 # ====================================================================== Öffentliche Seiten
 
+_overall: dict = {}
+OVERALL_TTL = 60      # Gesamtzahlen der Startseite höchstens so viele Sekunden alt
+
+
+def _cached(key: str, fn):
+    """Gesamtwerte (unabhängig vom Filter) kurz zwischenspeichern; neue Themen erscheinen spätestens nach einer Minute
+    in den Gesamtzahlen (die Liste selbst ist immer aktuell)."""
+    hit = _overall.get(key)
+    if hit and time.time() - hit[0] < OVERALL_TTL and hit[2] == db.DB_PATH:
+        return hit[1]
+    val = fn()
+    _overall[key] = (time.time(), val, db.DB_PATH)
+    return val
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(maybe_public)):
     args = _args(request)
@@ -474,14 +489,16 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
     items = [{"t": t, "sources": topic_sources(t["id"])} for t in rows]
     acts = activity()
     filtered = any(args.values())
-    tl = timeline(args)
-    tl_all = timeline({k: "" for k in args}) if filtered else tl
+    empty = {k: "" for k in args}
+    tl_all = _cached("timeline_all", lambda: timeline(empty))
+    tl = timeline(args) if filtered else tl_all
+    sx_all = _cached("stats_all", lambda: stats(empty))
 
     def scale(t):   # Skala für das gestapelte Diagramm: neutral liegt mittig auf der Nulllinie
         return max([max(x["pos"] + x["neu"] / 2, x["neg"] + x["neu"] / 2) for x in t] + [1])
     max_v = scale(tl)
-    domains = db.query("SELECT source_domain d, MIN(source_name) n, COUNT(*) c FROM articles "
-                       "WHERE relevant=1 GROUP BY source_domain ORDER BY n")
+    domains = _cached("domains", lambda: db.query("SELECT source_domain d, MIN(source_name) n, COUNT(*) c FROM articles "
+                                                  "WHERE relevant=1 GROUP BY source_domain ORDER BY n"))
     base_q = {k: v for k, v in args.items() if v}
     if select:
         base_q["auswahl"] = "1"
@@ -489,13 +506,12 @@ def dashboard(request: Request, page: int = 1, order: str = "new", _=Depends(may
         "select": select, "msg": request.query_params.get("msg", ""),
         "items": items, "total": total, "page": page, "pages": max(1, -(-total // size)), "args": args,
         "order": order, "timeline": tl, "max_v": max_v, "domains": domains, "status": status_info(),
-        "coverage": maintenance.coverage_by_year(),
+        "coverage": _cached("coverage", maintenance.coverage_by_year),
         "gap": gapfill.estimate() if config.get("gapfill_enabled") else None,
         "activity": acts, "more_url": "/fragment/topics?" + urlencode({**base_q, "order": order, "page": page + 1})
         if page * size < total else "",
-        "stats": stats(args), "period_since": pipeline.period()[0].isoformat(),
-        "filtered": filtered, "timeline_all": tl_all, "max_all": scale(tl_all),
-        "stats_all": stats({k: "" for k in args}) if filtered else stats(args),
+        "stats": stats(args) if filtered else sx_all, "period_since": pipeline.period()[0].isoformat(),
+        "filtered": filtered, "timeline_all": tl_all, "max_all": scale(tl_all), "stats_all": sx_all,
         "qs": lambda **kw: "?" + urlencode({**base_q, "order": order, **kw}),
     })
 
@@ -741,11 +757,7 @@ def admin(request: Request, msg: str = "", _=Depends(require_admin)):
         "session_days": auth.LIFETIME_DAYS, "session_max": auth.MAX_SESSIONS,
         "engines": engines_info(),
         "jobs": maintenance.jobs(), "backends": maintenance.backends(), "states": maintenance.STATES,
-        "hub_rows": db.query(
-            "SELECT h.*, (SELECT COUNT(*) FROM backfill_tasks t WHERE t.method='hub_page' AND t.status='ok' AND "
-            "t.target LIKE h.url || '%') pages_done, (SELECT COUNT(*) FROM backfill_tasks t WHERE t.method='hub_page' "
-            "AND t.status='offen' AND t.target LIKE h.url || '%') pages_open FROM hub_pages h "
-            "ORDER BY h.watch DESC, h.relevant DESC, h.last_fetch DESC LIMIT 60"),
+        "hub_rows": _hub_rows(),
         "hub_labels": hubs.WATCH_LABELS, "hub_watch_min": hubs.WATCH_MIN,
         "source_counts": {r["d"]: r["n"] for r in db.query(
             "SELECT source_domain d, COUNT(*) n FROM articles WHERE relevant=1 GROUP BY source_domain")},
@@ -831,6 +843,16 @@ def admin_source_toggle(sid: int, _=Depends(require_admin)):
     with db.tx() as conn:
         conn.execute("UPDATE sources SET enabled=? WHERE id=?", (0 if row["enabled"] else 1, sid))
     return back(f"„{row['name']}“ {'deaktiviert' if row['enabled'] else 'aktiviert – wird automatisch nachgeholt'}")
+
+
+def _hub_rows() -> list[dict]:
+    """Übersichtsseiten mit Zahl erledigter/offener Folgeseiten (eine Abfrage statt LIKE je Zeile)."""
+    rows = [dict(r) for r in db.query("SELECT * FROM hub_pages ORDER BY watch DESC, relevant DESC, last_fetch DESC LIMIT 60")]
+    pages = db.query("SELECT target, status FROM backfill_tasks WHERE method='hub_page'")
+    for r in rows:
+        mine = [p["status"] for p in pages if p["target"].startswith(r["url"])]
+        r["pages_done"], r["pages_open"] = mine.count("ok"), mine.count("offen")
+    return rows
 
 
 @app.post("/admin/hubs/watch")
@@ -1136,6 +1158,8 @@ def admin_article_detach(article_id: int, _=Depends(require_admin)):
 async def fetch_actions(request: Request, call_next):
     """Admin-Aktionen per fetch: Umleitungen in JSON umwandeln (Meldung am Knopf statt Seitensprung)."""
     resp = await call_next(request)
+    if request.method == "POST":
+        _overall.clear()             # nach Änderungen (Zusammenführen, Löschen, Bewerten …) Gesamtzahlen frisch
     if request.method == "POST" and _is_fetch(request) and resp.status_code in (302, 303):
         from urllib.parse import parse_qs
         loc = resp.headers.get("location", "")

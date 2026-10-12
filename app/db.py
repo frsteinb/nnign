@@ -211,6 +211,16 @@ MIGRATIONS = [
 ]
 
 
+# Indizes für Admin- und Statusabfragen; nach den Migrationen angelegt (manche Spalten kamen erst später hinzu)
+INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_articles_domain ON articles(source_domain, relevant)",
+    "CREATE INDEX IF NOT EXISTS idx_articles_lang ON articles(lang, relevant)",
+    "CREATE INDEX IF NOT EXISTS idx_backfill_method ON backfill_tasks(method, status)",
+    "CREATE INDEX IF NOT EXISTS idx_backfill_source ON backfill_tasks(source_id, method)",
+    "CREATE INDEX IF NOT EXISTS idx_topics_sentiment ON topics(hidden, sentiment)",
+]
+
+
 def init_db() -> None:
     with tx() as conn:
         conn.executescript(SCHEMA)
@@ -218,3 +228,6 @@ def init_db() -> None:
             cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
             if column not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        for sql in INDEXES:
+            conn.execute(sql)
+        conn.execute("PRAGMA optimize")          # Statistiken für den Abfrageplaner aktuell halten (billig)

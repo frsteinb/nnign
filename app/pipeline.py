@@ -695,12 +695,16 @@ def _fineness(r: dict) -> str:
     return "–"
 
 
+_per_source = {"at": 0.0, "rows": None}
+
+
 def backfill_progress() -> dict:
     rows = db.query("SELECT status, COUNT(*) n FROM backfill_tasks GROUP BY status")
     counts = {r["status"]: r["n"] for r in rows}
     total = sum(counts.values())
     done = total - counts.get("offen", 0)
-    per_method = db.query(
+    if time.time() - _per_source["at"] > 15 or _per_source["rows"] is None:   # aufwendig, kurz zwischenspeichern
+        _per_source.update(at=time.time(), rows=[{**dict(r), "fineness": _fineness(dict(r))} for r in db.query(
         "SELECT s.name, t.method, SUM(t.status='offen') offen, SUM(t.status='ok') ok, "
         "SUM(t.status='fehler') fehler, SUM(t.status='übersprungen') skipped, SUM(t.relevant) relevant, "
         "MIN(CASE WHEN t.status='ok' AND t.method!='wayback_index' THEN t.period_start END) earliest, "
@@ -711,7 +715,8 @@ def backfill_progress() -> dict:
         "MAX(CASE WHEN t.status='ok' THEN t.depth END) depth_max, "
         "COUNT(DISTINCT CASE WHEN t.method='search' AND t.status='ok' THEN substr(t.target, 1, instr(t.target, '+site') ) END) "
         "queries "
-        "FROM backfill_tasks t LEFT JOIN sources s ON s.id=t.source_id GROUP BY s.name, t.method ORDER BY s.name")
+        "FROM backfill_tasks t LEFT JOIN sources s ON s.id=t.source_id GROUP BY s.name, t.method ORDER BY s.name")])
+    per_method = _per_source["rows"]
     open_n = counts.get("offen", 0)
     pct = round(100 * done / total, 1) if total else 0.0
     if open_n and pct >= 100:
@@ -729,7 +734,7 @@ def backfill_progress() -> dict:
     return {"counts": counts, "total": total, "done": done, "open": open_n, "ok": counts.get("ok", 0),
             "failed": counts.get("fehler", 0), "skipped": counts.get("übersprungen", 0),
             "percent": pct, "state": state, "state_text": text,
-            "per_source": [{**dict(r), "fineness": _fineness(dict(r))} for r in per_method]}
+            "per_source": per_method}
 
 
 def _run_task(http: fetcher.Http, task, src) -> tuple[list[Item], list[tuple]]:
@@ -850,6 +855,7 @@ def backfill_batch(http: fetcher.Http) -> int:
                              (task["source_id"], method, target, start.isoformat(), end.isoformat(), prio, depth))
             _breaker(conn, task, err, len(items))
     STATUS["backfill"] = None
+    _per_source["rows"] = None
     log.info("Backfill: %d Aufgaben, %d Meldungen, %d neu gespeichert", len(tasks), len(all_items),
              ctx.new_articles - before)
     return len(tasks)
@@ -886,6 +892,7 @@ def reset_backfill(only_failed: bool = True) -> int:
         else:
             cur = conn.execute("UPDATE backfill_tasks SET status='offen', attempts=0, error=''")
     _breaker_counts.clear()
+    _per_source["rows"] = None
     return cur.rowcount
 
 

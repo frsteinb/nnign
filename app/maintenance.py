@@ -961,6 +961,9 @@ def work() -> None:
     """Von der Zeitsteuerung regelmäßig aufgerufen: prüfen und anstehende Arbeiten erledigen."""
     from . import pipeline
     now = time.time()
+    if now - _last.get("gapfill", 0) > 60:
+        _last["gapfill"] = now
+        gapfill.refresh()             # Abschätzung Lückenschluss im Hintergrund, nicht beim Seitenaufruf
     if now - _last["check"] > 60:
         _last["check"] = now
         check()
