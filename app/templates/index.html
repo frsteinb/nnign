@@ -225,6 +225,12 @@
       };
       if (!mergeBound) {                              // nur einmal, überlebt das Austauschen der Liste
         mergeBound = true;
+        document.addEventListener('click', function (e) {   // Klick auf die Box schaltet die Auswahl um
+          var li = e.target.closest('li.topic.selectable');
+          if (!li || e.target.closest('a, input, label, button')) return;
+          var cb = li.querySelector('input[name=ids]');
+          if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', {bubbles: true})); }
+        });
         document.addEventListener('change', function (e) {
           if (e.target.matches('input[name=ids]')) {
             e.target.closest('li').classList.toggle('picked', e.target.checked);

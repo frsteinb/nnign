@@ -428,3 +428,30 @@ a.button.secondary:hover, button.secondary:hover { background: color-mix(in srgb
   .fsearch .fkbd { display: none; }
   .fsearch input[type=search] { padding-right: 10px; }
   .fld.fwide { flex: 1 1 calc(50% - 6px); }}
+
+/* Ganze Themen-Box klickbar (Link des Titels über die Box gespannt); Quellen-Ovale und Auswahl liegen darüber */
+.topic { position: relative; transition: border-color .15s, box-shadow .15s; }
+.topic h3 a::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.topic:hover:not(:has(.srcs a:hover, .pick:hover, a.badge:hover)) { box-shadow: 0 3px 14px rgba(0, 0, 0, .08);
+  border-top-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-right-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-bottom-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent) 3%, var(--surface)); }
+.topic:hover:not(:has(.srcs a:hover, .pick:hover, a.badge:hover)) h3 a { text-decoration: underline; color: var(--accent); }
+.topic:has(h3 a:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.topic h3 a:focus-visible { outline: none; }
+.topic .srcs a, .topic .pick, .topic .meta a, .topic p a { position: relative; z-index: 1; }
+.topic .srcs a { transition: background .12s, border-color .12s, color .12s; }
+.topic .srcs a:hover, .topic .srcs a:focus-visible { border-color: var(--accent); color: var(--on-accent);
+  background: var(--accent); }
+.topic .srcs a:hover .lang { color: inherit; }
+/* Auswahlmodus: ein Klick auf die Box wählt aus, statt das Thema zu öffnen */
+.topic.selectable h3 a::after { content: none; }
+.topic.selectable { cursor: pointer; }
+
+/* Bewertungs-Oval als Link zur Begründung */
+a.badge { text-decoration: none; position: relative; z-index: 1; transition: filter .12s, box-shadow .12s; }
+a.badge:hover, a.badge:focus-visible { filter: brightness(.94) saturate(1.2); box-shadow: 0 0 0 2px currentColor; }
+.whybox { scroll-margin-top: 16px; }
+.whybox:target { animation: nnign-flash 1.6s ease-out; }
+@keyframes nnign-flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: 0 0 0 3px transparent; } }

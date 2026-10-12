@@ -4,7 +4,7 @@
 <p><a href="/">← alle Themen</a></p>
 <article class="card">
   <div class="meta">
-    <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
+    <a class="badge {{ t.sentiment }}" href="#bewertung" title="Zur Begründung der Bewertung">{{ symbol[t.sentiment] }} {{ t.sentiment }}</a>
     {% if t.scope == 'partner' %}<span class="badge partner">Partner/Beteiligung</span>{% endif %}
     <span>bewertet durch: {{ {'lexikon': 'Regeln', 'llm': 'KI', 'manuell': 'Admin (manuell)', 'lernend': 'lernendes Modell', 'zeroshot': 'Zero-Shot-Modell'}.get(t.sentiment_origin, t.sentiment_origin) }}</span>
     {% if t.hidden %}<span class="badge">ausgeblendet</span>{% endif %}
@@ -17,7 +17,7 @@
     <dt>Meldungen</dt><dd>{{ t.article_count }}</dd>
   </dl>
   {% if t.abstract %}<p class="abstract">{{ t.abstract }}</p>{% else %}<p class="muted">Kein Abstract verfügbar.</p>{% endif %}
-  <details class="whybox" open>
+  <details class="whybox" id="bewertung" open>
     <summary><strong>Warum diese Bewertung?</strong></summary>
     {% if t.sentiment_origin == 'manuell' %}
       <p>Vom Admin festgelegt; automatische Änderungen sind für dieses Thema gesperrt.</p>

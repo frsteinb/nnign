@@ -49,3 +49,15 @@ def test_start_page_has_empty_filters_and_filtered_chart(env):
         page = c.get("/?sentiment=negativ&date_from=2021-01-01&date_to=2021-12-31").text
         assert "Entwicklung 2021 nach Monat gemäß Filter" in page
         assert 'date_to=2021-03-31' in page                                     # Monatsende korrekt
+
+
+def test_topic_box_links(env):
+    from fastapi.testclient import TestClient
+
+    from app import main
+    _topics()
+    with TestClient(main.app) as c:
+        page = c.get("/").text
+        assert 'class="badge negativ" href="/thema/' in page and '#bewertung"' in page    # Oval führt zur Begründung
+        tid = page.split('href="/thema/')[1].split("#")[0].split('"')[0]
+        assert 'id="bewertung" open' in c.get(f"/thema/{tid}").text
