@@ -128,7 +128,7 @@ DEFAULT_PARTNERS = [
 ]
 
 DEFAULT_BRANDS = [
-    r"Audi\w*",
+    r"Audis?|Audianer\w*",             # nicht Audible, Audio, Audit, Audience … (Audi-Chef zählt über den Bindestrich)
     r"Porsche\w*",
     r"Škoda|Skoda",
     r"Seat",
@@ -392,6 +392,33 @@ def parse_value(s: Setting, raw: Any):
         v = str(raw).strip()
         return v if v in s.choices else s.default
     return str(raw).strip()
+
+
+# Korrekturen an früheren Standardbegriffen, auch wenn der Admin die Liste gespeichert hat: alt -> neu
+KEYWORD_FIXES = {"keywords_brands": {r"Audi\w*": r"Audis?|Audianer\w*"}}
+KEYWORD_FIX_VERSION = 1      # erhöhen, wenn Standardbegriffe nur enger gefasst werden (kein erneutes Laden nötig)
+
+
+def migrate_keywords() -> int:
+    """Bekannte zu weite Muster in gespeicherten Begriffslisten ersetzen (z. B. „Audi\\w*“ traf auch „Audible“)."""
+    n = 0
+    for key, fixes in KEYWORD_FIXES.items():
+        row = db.query_one("SELECT value FROM settings WHERE key=?", (key,))
+        if row is None:
+            continue
+        try:
+            values = list(parse_value(BY_KEY[key], json.loads(row["value"])))
+        except (ValueError, TypeError):
+            continue
+        new = [fixes.get(v, v) for v in values]
+        if new != values:
+            set(key, new)
+            n += 1
+    if n or (state_get("keyword_fix_version") or 0) < KEYWORD_FIX_VERSION:
+        state_set("keyword_fix_version", KEYWORD_FIX_VERSION)
+        if db.query_one("SELECT 1 FROM articles LIMIT 1"):
+            state_set("keywords_fixed", True)
+    return n
 
 
 def get(key: str):

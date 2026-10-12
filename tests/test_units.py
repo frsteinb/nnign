@@ -103,3 +103,37 @@ def test_partner_scope_in_pipeline_and_filter(env):
     with TestClient(main.app) as c:
         assert "Partner</span>" in c.get("/").text
         assert "Xpeng" in c.get("/?scope=partner").text and "Sparprogramm" not in c.get("/?scope=partner").text
+
+
+def test_audi_does_not_match_audible_audio_audit(env):
+    from app.relevance import Matcher
+    m = Matcher.from_config()
+    for t in ["Audible senkt den Abo-Preis", "Audio-Streaming wächst kräftig", "Audit bei Siemens abgeschlossen",
+              "Audience Award für neuen Film"]:
+        assert m.score(t, "") == 0, t
+    for t in ["Audi steigert den Absatz", "Audis Elektrooffensive stockt", "Audi-Chef stellt Strategie vor",
+              "Audianer feiern Jubiläum"]:
+        assert m.score(t, "") > 0, t
+
+
+def test_old_brand_pattern_is_fixed_and_audible_cleaned_up(env):
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from app import config, db, main, maintenance
+    old = [r"Audi\w*" if p == r"Audis?|Audianer\w*" else p for p in config.DEFAULT_BRANDS]
+    now = db.utcnow()
+    with db.tx() as conn:
+        conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('keywords_brands', ?)", (json.dumps(old),))
+        tid = conn.execute("INSERT INTO topics(title, sentiment, first_published_at, last_published_at, created_at, "
+                           "updated_at) VALUES('Audible senkt Preise', 'neutral', ?, ?, ?, ?)", (now, now, now, now)).lastrowid
+        conn.execute("INSERT INTO articles(url, title, title_key, summary, source_name, source_domain, published_at, "
+                     "fetched_at, via, relevant, topic_id) VALUES('https://x/aud', 'Audible senkt Preise', 'audible', '', "
+                     "'X', 'x.de', ?, ?, 'rss', 1, ?)", (now, now, tid))
+    config.state_set("bases", {**maintenance.bases(), "relevance": "alt"})
+    with TestClient(main.app):
+        pass
+    assert r"Audi\w*" not in config.get("keywords_brands") and r"Audis?|Audianer\w*" in config.get("keywords_brands")
+    assert db.query_one("SELECT relevant FROM articles WHERE url='https://x/aud'")["relevant"] == 0
+    assert not [x for x in maintenance.suggestions() if x["id"] in ("rescan", "relevance_cleanup")]

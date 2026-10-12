@@ -29,7 +29,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.19.5"
+VERSION = "1.19.6"
 
 
 # ====================================================================== Admin-Passwort
@@ -121,6 +121,7 @@ async def lifespan(app: FastAPI):
     changes = sources.seed_sources()
     pipeline.ensure_default_period()
     llm.migrate_settings()
+    config.migrate_keywords()
     pipeline.upgrade_on_start(changes)
     maintenance.check(startup=True)
     init_admin_password()

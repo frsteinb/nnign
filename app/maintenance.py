@@ -194,6 +194,16 @@ def check(startup: bool = False) -> list[str]:
         if not _offered("topics", cur["topics"]):
             _accept("topics", cur["topics"])
 
+    # Korrektur zu weiter Standardbegriffe (z. B. „Audi\w*“ traf „Audible“): trifft nur weniger -> direkt aufräumen,
+    # kein erneutes Laden der Historie nötig
+    if config.state_get("keywords_fixed") and cur["relevance"] != old.get("relevance"):
+        config.state_set("keywords_fixed", False)
+        if has_data:
+            rescope()
+            n = relevance_cleanup()
+            if n:
+                notes.append(f"Relevanzbegriffe korrigiert – {n} Meldungen ohne Konzernbezug (z. B. Audible) entfernt")
+        _accept("relevance", cur["relevance"])
     # Relevanzbegriffe -> nicht mehr passende Meldungen und erneutes Durchsuchen vorschlagen
     if cur["relevance"] != old.get("relevance") and not _offered("relevance", cur["relevance"]):
         if has_data:
