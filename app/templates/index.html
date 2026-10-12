@@ -37,9 +37,11 @@
 </section>
 {% endmacro %}
 {% macro chartbox(timeline, max_v, year, overall) %}
+{% set monthly = timeline and timeline[0].key|length == 7 %}
+{% set multiyear = monthly and timeline[0].key[:4] != timeline[-1].key[:4] %}
 <section class="card chartbox">
   <div class="card-head">
-    <h2>{% if year %}Entwicklung {{ year }} nach Monat{% if not overall %} gemäß Filter{% endif %}{% else %}Entwicklung seit {{ timeline[0].key if timeline else '' }}{% if not overall %} gemäß Filter{% endif %}{% endif %}</h2>
+    <h2>{% if monthly and not multiyear %}Entwicklung {{ timeline[0].key[:4] }} nach Monat{% elif monthly %}Entwicklung {{ timeline[0].key }} bis {{ timeline[-1].key }} nach Monat{% elif overall or timeline|length < 2 %}Entwicklung seit {{ timeline[0].key if timeline else '' }}{% else %}Entwicklung {{ timeline[0].key }}–{{ timeline[-1].key }}{% endif %}{% if not overall %} gemäß Filter{% endif %}</h2>
     <div class="legend"><span><span class="dot pos"></span>positiv (oben)</span><span><span class="dot neu"></span>neutral (Mitte)</span><span><span class="dot neg"></span>negativ (unten)</span>
       {% if year %}<a href="{{ qs(year='') }}#gefiltert">alle Jahre</a>{% endif %}</div>
   </div>
@@ -49,7 +51,7 @@
   {% set bw = [[step - 2, 2]|max, 44]|min %}{% set off = (step - 2 - bw) / 2 %}
   <div class="chart-wrap">
   {% set covmap = {} %}{% for c in coverage %}{% set _ = covmap.update({c.year|string: c}) %}{% endfor %}
-  <svg class="chart" viewBox="0 0 {{ w }} {{ h + (28 if not year else 18) }}" role="img" aria-label="Positive, neutrale und negative Themen je Zeitraum">
+  <svg class="chart" viewBox="0 0 {{ w }} {{ h + (28 if not monthly else 18) }}" role="img" aria-label="Positive, neutrale und negative Themen je Zeitraum">
     <line class="axis" x1="{{ pad }}" x2="{{ w }}" y1="{{ mid }}" y2="{{ mid }}"/>
     <text class="tick" x="{{ pad - 4 }}" y="14" text-anchor="end">{{ '%g'|format(max_v) }}</text>
     <text class="tick" x="{{ pad - 4 }}" y="{{ mid + 4 }}" text-anchor="end">0</text>
@@ -58,24 +60,24 @@
       {% set x = pad + loop.index0 * step + 1 + off %}
       {% set scale = (mid - 10) / max_v %}
       {% set hz = p.neu * scale %}{% set hp = p.pos * scale %}{% set hn = p.neg * scale %}
-      {% set label = p.key[5:] if year else p.key %}
-      <a class="bar" data-key="{{ p.key }}" data-n="{{ p.pos + p.neu + p.neg }}" aria-label="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ" href="{{ qs(year=p.key[:4]) if not year else qs(date_from=p.key ~ '-01', date_to=p.key ~ '-31', year=year) }}#gefiltert">
+      {% set label = (p.key[5:] ~ '/' ~ p.key[2:4] if multiyear else p.key[5:]) if monthly else p.key %}
+      <a class="bar" data-key="{{ p.key }}" data-n="{{ p.pos + p.neu + p.neg }}" aria-label="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ" href="{{ qs(year=p.key[:4]) if not monthly else qs(date_from=p.key ~ '-01', date_to=month_end(p.key), year=p.key[:4]) }}#gefiltert">
       {% set cv = covmap.get(p.key[:4]) if overall else none %}
-      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ{% if cv and not year %} · Datenlage {{ cv.level }}{{ ' – wird noch ergänzt' if cv.growing }}{% endif %}">
+      <g class="col" data-tip="{{ p.key }}: {{ p.pos }} positiv, {{ p.neu }} neutral, {{ p.neg }} negativ{% if cv and not monthly %} · Datenlage {{ cv.level }}{{ ' – wird noch ergänzt' if cv.growing }}{% endif %}">
         <rect class="hit" x="{{ x - 1 - off }}" y="0" width="{{ step }}" height="{{ h }}"/>
         {% if p.neu %}<rect class="neu" x="{{ x }}" y="{{ mid - hz/2 }}" width="{{ bw }}" height="{{ [hz, 1]|max }}"/>{% endif %}
         {% if p.pos %}<rect class="pos" x="{{ x }}" y="{{ mid - hz/2 - 1 - hp }}" width="{{ bw }}" height="{{ hp }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
         {% if p.neg %}<rect class="neg" x="{{ x }}" y="{{ mid + hz/2 + 1 }}" width="{{ bw }}" height="{{ hn }}" rx="{{ [2, bw/2]|min }}"/>{% endif %}
       </g></a>
-      {% if cv and not year %}<rect class="cov {{ cv.level }}{{ ' growing' if cv.growing }}" x="{{ x }}" y="{{ h + 19 }}" width="{{ bw }}" height="5" rx="1"><title>{{ p.key }}: Datenlage {{ cv.level }} ({{ cv.articles }} Meldungen){{ ' – Historie wird noch ergänzt' if cv.growing }}</title></rect>{% endif %}
-      {% if year or loop.index0 % ((n // 13) + 1) == 0 or loop.last %}
+      {% if cv and not monthly %}<rect class="cov {{ cv.level }}{{ ' growing' if cv.growing }}" x="{{ x }}" y="{{ h + 19 }}" width="{{ bw }}" height="5" rx="1"><title>{{ p.key }}: Datenlage {{ cv.level }} ({{ cv.articles }} Meldungen){{ ' – Historie wird noch ergänzt' if cv.growing }}</title></rect>{% endif %}
+      {% if (monthly and n <= 13) or loop.index0 % ((n // 13) + 1) == 0 or loop.last %}
       <text class="tick" x="{{ x + bw/2 }}" y="{{ h + 14 }}" text-anchor="middle">{{ label }}</text>
       {% endif %}
     {% endfor %}
   </svg>
   <div class="tooltip" hidden></div>
   </div>
-  {% if overall and coverage and not year %}
+  {% if overall and coverage and not monthly %}
   {% set thin = coverage|selectattr('level', 'equalto', 'dünn')|map(attribute='year')|list %}
   {% set growing = coverage|selectattr('growing')|list %}
   <p class="covnote small"><span class="covkey"><span class="cov gut"></span>gut <span class="cov mittel"></span>mittel <span class="cov dünn"></span>dünn erfasst</span>
@@ -101,7 +103,7 @@
 
 <hr class="divider" id="gefiltert">
 
-<form class="filters card" id="filters" method="get" action="/" role="search" aria-label="Themen filtern">
+<form class="filters card" id="filters" method="get" action="/" autocomplete="off" role="search" aria-label="Themen filtern">
   <div class="fsearch"><div class="fq">
     <svg class="ficon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     <input type="search" name="q" value="{{ args.q }}" placeholder="Suche in Themen …" aria-label="Suche" autocomplete="off">
@@ -283,7 +285,7 @@
     var focusKey = null;                               // nach dem Laden diesen Zeitbalken fokussieren
     var urlOf = function () {
       var p = new URLSearchParams();
-      new FormData(form).forEach(function (v, k) { if (v) p.append(k, v); });
+      new FormData(form).forEach(function (v, k) { if (v && !(k === 'order' && v === 'new')) p.append(k, v); });
       var s = p.toString();
       return form.getAttribute('action') + (s ? '?' + s : '');
     };
@@ -341,6 +343,18 @@
       return '/' + (s ? '?' + s : '');
     };
     if (!history.state) history.replaceState({nnign: 1, typing: false, entry: 1}, '', location.href);
+    var syncFromUrl = function () {
+      var p = new URLSearchParams(location.search);
+      form.querySelectorAll('input:not([type=hidden]), select').forEach(function (el) {
+        var v = p.get(el.name) || '';
+        if (el.tagName === 'SELECT') {
+          if (!v) el.selectedIndex = 0; else el.value = v;
+        } else el.value = v;
+      });
+      if (q) last = q.value;
+    };
+    syncFromUrl();
+    window.addEventListener('pageshow', function (e) { if (e.persisted) syncFromUrl(); });
     window.addEventListener('popstate', function () { load(location.href, 'pop'); });
 
     form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(timer); go(); });
@@ -466,7 +480,8 @@
       }
       if (onBar && e.key === 'ArrowDown') {
         var key = act.dataset.key;
-        if (key.length === 7 && new URLSearchParams(location.search).get('date_from')) return true;   // tiefste Ebene
+        var cur = new URLSearchParams(location.search);
+        if (key.length === 7 && cur.get('date_from') === key + '-01' && cur.get('date_to') === lastDay(key)) return true;
         focusKey = 'first';
         load(zoomUrl(key), 'push');
         return true;

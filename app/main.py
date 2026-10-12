@@ -10,9 +10,10 @@ import logging
 import os
 import secrets
 import threading
+import re
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -28,7 +29,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.19.1"
+VERSION = "1.19.2"
 
 
 # ====================================================================== Admin-Passwort
@@ -166,6 +167,15 @@ def _job_groups(jobs):
 
 templates.env.globals["job_groups"] = _job_groups
 templates.env.globals["fmt_duration"] = gapfill.fmt_duration
+
+
+def _month_end(ym: str) -> str:
+    import calendar
+    y, m = int(ym[:4]), int(ym[5:7])
+    return f"{ym}-{calendar.monthrange(y, m)[1]:02d}"
+
+
+templates.env.globals["month_end"] = _month_end
 templates.env.globals["suggestions"] = lambda: maintenance.suggestions()
 templates.env.globals["symbol"] = {"positiv": "▲", "neutral": "●", "negativ": "▼"}
 templates.env.globals["languages"] = sources.LANGUAGES
@@ -226,26 +236,37 @@ def list_topics(args: dict, page: int, page_size: int, order: str = "new"):
 
 
 def timeline(args: dict):
-    """Positive/neutrale/negative Themen je Jahr (oder je Monat, wenn ein Jahr gewählt ist)."""
-    a = dict(args)
-    year = a.pop("year", "")
-    a.pop("sentiment", None)
-    where, params = topic_filters(**a)
+    """Positive/neutrale/negative Themen je Jahr bzw. je Monat – mit allen aktiven Filtern (auch Bewertung).
+    Monate, wenn ein Jahr gewählt ist oder der Datumsbereich höchstens zwei Jahre umfasst; die Achse reicht
+    nur über den gefilterten Zeitraum."""
+    where, params = topic_filters(**args)
+    year = args.get("year", "")
+    d_from, d_to = (args.get("date_from") or "")[:10], (args.get("date_to") or "")[:10]
+    lo = date.fromisoformat(d_from) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d_from) else None
+    hi = date.fromisoformat(d_to) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d_to) else None
     if year.isdigit():
-        key = "substr(t.first_published_at,1,7)"
-        where = (where + " AND " if where else " WHERE ") + "substr(t.first_published_at,1,4)=?"
-        params = [*params, year]
-    else:
-        key = "substr(t.first_published_at,1,4)"
+        lo = max(lo, date(int(year), 1, 1)) if lo else date(int(year), 1, 1)
+        hi = min(hi, date(int(year), 12, 31)) if hi else date(int(year), 12, 31)
+    monthly = bool(year.isdigit() or (lo and hi and (hi.year - lo.year) * 12 + hi.month - lo.month < 24))
+    key = "substr(t.first_published_at,1,7)" if monthly else "substr(t.first_published_at,1,4)"
     rows = db.query(f"SELECT {key} k, SUM(t.sentiment='positiv') pos, SUM(t.sentiment='neutral') neu, "
                     f"SUM(t.sentiment='negativ') neg FROM topics t{where} GROUP BY k ORDER BY k", params)
-    data = {r["k"]: (r["pos"] or 0, r["neu"] or 0, r["neg"] or 0) for r in rows}
-    if year.isdigit():
-        keys = [f"{year}-{m:02d}" for m in range(1, 13)]
+    data = {r["k"]: (r["pos"] or 0, r["neu"] or 0, r["neg"] or 0) for r in rows if r["k"]}
+    today = datetime.now().date()
+    if monthly:
+        start = lo or (date.fromisoformat(min(data) + "-01") if data else today)
+        end = hi or today
+        if year.isdigit() and not args.get("date_from") and not args.get("date_to"):
+            start, end = date(int(year), 1, 1), date(int(year), 12, 1)
+        keys, y, m = [], start.year, start.month
+        while (y, m) <= (end.year, end.month):
+            keys.append(f"{y:04d}-{m:02d}")
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
     else:
-        first = int(min(data)) if data else datetime.now().year
-        start = min(first, pipeline.period()[0].year)
-        keys = [str(y) for y in range(start, datetime.now().year + 1)]
+        first = int(min(data)) if data else today.year
+        start_y = lo.year if lo else min(first, pipeline.period()[0].year)
+        end_y = hi.year if hi else today.year
+        keys = [str(y) for y in range(start_y, end_y + 1)]
     return [{"key": k, "pos": data.get(k, (0, 0, 0))[0], "neu": data.get(k, (0, 0, 0))[1],
              "neg": data.get(k, (0, 0, 0))[2]} for k in keys]
 
@@ -816,7 +837,6 @@ def admin_source_toggle(sid: int, _=Depends(require_admin)):
 def admin_hub_watch(url: str = Form(...), watch: int = Form(2), _=Depends(require_admin)):
     from .textutil import domain_matches
     url = url.strip()
-    import re
     if not re.match(r"^https?://[^/\s]+\.[^/\s]+", url):
         return back("Bitte eine vollständige Adresse (https://…) angeben.", "uebersichtsseiten", info=True)
     src = next((s for s in sources.all_sources() if domain_matches(url, s["domain"])), None)
