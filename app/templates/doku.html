@@ -360,7 +360,10 @@ Admin-Bereich anpassen – oder die Zahlen einfach mit der gebotenen Vorsicht le
   <li><strong>Kennzahl + Richtung</strong> (Gewicht ±{{ pair_weight }}): steht eine Kennzahl höchstens fünf Wörter
     vor oder drei Wörter nach einer Richtung, zählt die Kombination. Bei „guten“ Kennzahlen ist <em>steigen</em> positiv,
     bei „schlechten“ Kennzahlen (Verlust, Kosten …) ist <em>sinken</em> positiv. So wird „Verlust sinkt“ positiv und
-    „Absatz sinkt“ negativ. Diese Stellen werden danach ausgeblendet, damit Wörter darin nicht doppelt zählen.
+    „Absatz sinkt“ negativ. Ebenso zählen Stückzahlen mit Verb: „verkauft weniger Autos“, „liefert weniger Fahrzeuge
+    aus“ (negativ) bzw. „verkauft mehr Autos“, „so viele Autos wie nie“ (positiv). Ein wiederholter Trend („erneut“,
+    „wieder“, „weiter“) wiegt ein Viertel schwerer. Diese Stellen werden danach ausgeblendet, damit Wörter darin nicht
+    doppelt zählen.
     <ul class="small">
       <li>gute Kennzahlen: {{ metrics_good }}</li>
       <li>schlechte Kennzahlen: {{ metrics_bad }}</li>

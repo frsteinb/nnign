@@ -66,6 +66,13 @@ CASES = [
     ("Cupra startet Leasingaktion für den Born", "negativ"),
     ("Hohe Rabatte auf Tiguan-Tageszulassungen", "negativ"),
     ("VW stellt neuen ID.2 für 25.000 Euro vor", "positiv"),
+    # Stückzahlen mit Verb (rückläufige Verkäufe sind deutlich negativ)
+    ("Autoindustrie: Volkswagen verkauft erneut weniger Autos", "negativ"),
+    ("Volkswagen liefert im dritten Quartal weniger Fahrzeuge aus", "negativ"),
+    ("VW hat 2025 deutlich weniger E-Autos verkauft", "negativ"),
+    ("Porsche verkauft so viele Autos wie nie", "positiv"),
+    ("Skoda liefert mehr Fahrzeuge aus als im Vorjahr", "positiv"),
+    ("VW baut weniger Stellen ab als befürchtet", "neutral"),
     # Fallen von früher
     ("VW-Werk in Brandenburg schließlich eröffnet", "positiv"),
     ("Tarifeinigung bei VW: Beschäftigungssicherung bis 2030", "positiv"),
@@ -99,3 +106,10 @@ def test_discounts_other_languages():
     assert s.label_for(s.analyze("Volkswagen offers steep discounts on ID.4", "", "en")) == "negativ"
     assert s.label_for(s.analyze("大众汽车降价促销", "", "zh")) == "negativ"
 
+
+
+def test_repeated_decline_weighs_more():
+    once = s.analyze("Volkswagen verkauft weniger Autos")
+    again = s.analyze("Volkswagen verkauft erneut weniger Autos")
+    assert again.neg > once.neg > 0
+    assert s.classify(*(lambda r: (r.pos, r.neg))(s.analyze("Volkswagen sells fewer cars in China", lang="en"))) == "negativ"

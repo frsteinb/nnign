@@ -74,6 +74,21 @@ _PAIR_PATTERNS = [
     (re.compile(rf"(?<![a-z])(?:{UP})(?![a-z])(?:[ ,]+[a-z0-9.%-]+){{0,3}}?[ ,]+(?:{GOOD_METRICS})(?![a-z])"), +1),
     (re.compile(rf"(?<![a-z])(?:{DOWN})(?![a-z])(?:[ ,]+[a-z0-9.%-]+){{0,3}}?[ ,]+(?:{GOOD_METRICS})(?![a-z])"), -1),
 ]
+# Stückzahlen mit Verb: „VW verkauft (erneut) weniger Autos“, „liefert mehr Fahrzeuge aus“, „weniger Autos verkauft“
+VOLUME_VERBS = (r"verkauft|verkaufte|verkauften|verkaufen|verkauf[a-z]*|liefert|lieferte|lieferten|liefern|ausgeliefert|"
+                r"setzt|setzte|setzten|abgesetzt|produziert|produzierte|produzierten|baut|baute|bauten|gebaut|"
+                r"zugelassen|brachte|bringt|exportiert|exportierte")
+VOLUME_UNITS = (r"autos|fahrzeuge|wagen|pkw|lkw|e-autos|elektroautos|elektrofahrzeuge|e-fahrzeuge|stromer|"
+                r"neuwagen|einheiten|nutzfahrzeuge|lastwagen|busse|suv|modelle|exemplare|motorrader|cars|vehicles")
+_FEWER = r"weniger|deutlich weniger|viel weniger|immer weniger|kaum noch"
+_MORE = r"mehr|deutlich mehr|viel mehr|so viele|immer mehr"
+_W = r"(?:[ ,]+[a-z0-9.%-]+){0,4}?[ ,]+"
+_PAIR_PATTERNS += [
+    (re.compile(rf"(?<![a-z])(?:{VOLUME_VERBS})(?![a-z]){_W}(?:{_FEWER})[ ]+(?:[a-z0-9.%-]+[ ]+){{0,2}}?(?:{VOLUME_UNITS})(?![a-z])"), -1),
+    (re.compile(rf"(?<![a-z])(?:{VOLUME_VERBS})(?![a-z]){_W}(?:{_MORE})[ ]+(?:[a-z0-9.%-]+[ ]+){{0,2}}?(?:{VOLUME_UNITS})(?![a-z])"), +1),
+    (re.compile(rf"(?<![a-z])(?:{_FEWER})[ ]+(?:[a-z0-9.%-]+[ ]+){{0,2}}?(?:{VOLUME_UNITS})(?![a-z]){_W}(?:{VOLUME_VERBS})(?![a-z])"), -1),
+    (re.compile(rf"(?<![a-z])(?:{_MORE})[ ]+(?:[a-z0-9.%-]+[ ]+){{0,2}}?(?:{VOLUME_UNITS})(?![a-z]){_W}(?:{VOLUME_VERBS})(?![a-z])"), +1),
+]
 PAIR_WEIGHT = 3.0
 
 # ---------------------------------------------------------------- Regeln je Kategorie
@@ -182,6 +197,7 @@ _NEGATORS = {"kein", "keine", "keinen", "keiner", "keinem", "nicht", "ohne", "ka
              # englisch
              "no", "not", "without", "never", "nor"}
 _CONCESSIVE = {"trotz", "despite"}
+_REPEAT = {"erneut", "wieder", "abermals", "nochmals", "weiter", "again", "further"}
 _ZH_NEGATORS = ("不", "未", "没有", "没", "无")
 _SENT = re.compile(r"[.!?;。！？；]+(?=\s|$|[^\x00-\x7f])")  # nicht bei „ID.2“ oder „2.000“
 _SPLIT = re.compile(r"([.!?;。！？；]+(?=\s|$|[^\x00-\x7f]))")
@@ -300,7 +316,14 @@ def _pairs(good: str, bad: str, up: str, down: str, b: str = r"(?<![a-z])", e: s
 
 _LANG_PAIRS = {
     "de": _PAIR_PATTERNS,
-    "en": _pairs(EN_GOOD_METRICS, EN_BAD_METRICS, EN_UP, EN_DOWN),
+    "en": _pairs(EN_GOOD_METRICS, EN_BAD_METRICS, EN_UP, EN_DOWN) + [
+        (re.compile(r"(?<![a-z])(?:sells|sold|sell|delivers|delivered|deliver|ships|shipped|builds|built|produced)"
+                    r"(?:[ ,]+[a-z0-9.%-]+){0,3}?[ ,]+(?:fewer|less)[ ]+(?:[a-z0-9.%-]+[ ]+){0,2}?"
+                    r"(?:cars|vehicles|units|evs|trucks)(?![a-z])"), -1),
+        (re.compile(r"(?<![a-z])(?:sells|sold|sell|delivers|delivered|deliver|ships|shipped|builds|built|produced)"
+                    r"(?:[ ,]+[a-z0-9.%-]+){0,3}?[ ,]+more[ ]+(?:[a-z0-9.%-]+[ ]+){0,2}?"
+                    r"(?:cars|vehicles|units|evs|trucks)(?![a-z])"), +1),
+    ],
     "zh": _pairs(ZH_GOOD_METRICS, ZH_BAD_METRICS, ZH_UP, ZH_DOWN, b="", e="", gap=r"[^。，,；]{0,8}?",
                  gap2=r"[^。，,；]{0,4}?"),
 }
@@ -373,6 +396,12 @@ def _modifier(text: str, start: int) -> float:
     return 1.0
 
 
+def _repeat_boost(text: str, start: int, end: int) -> float:
+    """Wiederholter Trend („erneut weniger“, „sinkt wieder“) wiegt etwas schwerer."""
+    words = set(_WORD.findall(text[max(0, start - 25):min(len(text), end + 25)]))
+    return 1.25 if words & _REPEAT else 1.0
+
+
 def _score_segment(original: str, factor: float, rules, pairs=_PAIR_PATTERNS) -> Result:
     res = Result()
     text, posmap = _fold_with_map(original)
@@ -395,7 +424,8 @@ def _score_segment(original: str, factor: float, rules, pairs=_PAIR_PATTERNS) ->
         # 1. Kennzahl + Richtung; gefundene Stellen ausblenden
         for pat, sign in pairs:
             for m in list(pat.finditer(s)):
-                hit("Kennzahl + Richtung", offset, m, sign * PAIR_WEIGHT * _modifier(s, m.start()))
+                hit("Kennzahl + Richtung", offset, m,
+                    sign * PAIR_WEIGHT * _modifier(s, m.start()) * _repeat_boost(s, m.start(), m.end()))
             s = pat.sub(lambda m: " " * len(m.group(0)), s)
         # 2. Regeln je Kategorie
         for rule, rx in rules:
@@ -424,7 +454,7 @@ def fingerprint() -> str:
     import hashlib
     parts = [f"{r.category}|{r.pattern}|{r.weight}" for r in RULES + EN_RULES + ZH_RULES]
     parts += [p.pattern for pairs in _LANG_PAIRS.values() for p, _ in pairs]
-    parts += [str(PAIR_WEIGHT), str(_MAX_PER_RULE), ",".join(sorted(_NEGATORS))]
+    parts += [str(PAIR_WEIGHT), str(_MAX_PER_RULE), ",".join(sorted(_NEGATORS)), ",".join(sorted(_REPEAT))]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
