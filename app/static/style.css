@@ -394,3 +394,37 @@ hr.divider { border: 0; border-top: 2px solid var(--line, #d0d7de); margin: 22px
 /* Übersichtsseiten im Admin */
 .inline-add { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 18px; }
 .inline-add input[type=url] { flex: 1 1 320px; }
+
+/* Filter-Bereich: Karte mit Suchfeld oben, darunter beschriftete Felder; Zeitraum als zusammenhängende Gruppe */
+.filters.card { display: block; padding: 14px 16px; }
+.fsearch { position: relative; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.fsearch .fq { position: relative; flex: 1 1 auto; display: flex; align-items: center; }
+.freset { height: 40px; display: inline-flex; align-items: center; white-space: nowrap; flex: none; }
+
+.fsearch .ficon { position: absolute; left: 11px; color: var(--muted); pointer-events: none; }
+.fsearch input[type=search] { width: 100%; flex: 1 1 auto; padding: 9px 40px 9px 36px; font-size: 16px; border-radius: 9px; }
+.fsearch .fkbd { position: absolute; right: 10px; font: 12px/1 ui-monospace, monospace; color: var(--muted);
+  border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 3px 6px; background: var(--bg); }
+.fsearch input:focus ~ .fkbd { display: none; }
+.frow { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
+.fld { display: flex; flex-direction: column; gap: 3px; flex: 1 1 150px; min-width: 0; margin: 0; }
+.flbl { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+.fld select, .fld input { width: 100%; height: 36px; }
+.frange { flex: 2 1 290px; }
+.fld.fwide { flex: 1.5 1 210px; }
+.rangebox { display: flex; flex-wrap: nowrap; align-items: center; height: 36px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--surface); overflow: hidden; }
+.rangebox:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.rangebox input[type=date] { border: 0; border-radius: 0; height: 34px; min-width: 0; flex: 1 1 0; background: transparent; }
+.rangebox input[type=date]:focus { outline: none; }
+.rangesep { color: var(--muted); padding: 0 2px; flex: none; }
+.fld select:focus, .fsearch input:focus { outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+a.button.secondary:hover, button.secondary:hover { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+@media (max-width: 640px) {
+  .fld { flex: 1 1 calc(50% - 6px); }
+  .frange { flex: 1 1 100%; }
+  .freset { padding: 6px 10px; }
+  .fsearch .fkbd { display: none; }
+  .fsearch input[type=search] { padding-right: 10px; }
+  .fld.fwide { flex: 1 1 calc(50% - 6px); }}

@@ -101,35 +101,49 @@
 
 <hr class="divider" id="gefiltert">
 
-<form class="filters" id="filters" method="get" action="/">
-  <input type="search" name="q" value="{{ args.q }}" placeholder="Suche in Themen …" aria-label="Suche">
-  <select name="sentiment" aria-label="Bewertung">
-    <option value="">alle Bewertungen</option>
-    <option value="positiv" {{ 'selected' if args.sentiment == 'positiv' }}>positiv</option>
-    <option value="neutral" {{ 'selected' if args.sentiment == 'neutral' }}>neutral</option>
-    <option value="negativ" {{ 'selected' if args.sentiment == 'negativ' }}>negativ</option>
-  </select>
-  <select name="scope" aria-label="Bereich">
-    <option value="">Konzern und Partner</option>
-    <option value="konzern" {{ 'selected' if args.scope == 'konzern' }}>nur Konzern und Marken</option>
-    <option value="partner" {{ 'selected' if args.scope == 'partner' }}>nur Partner und Beteiligungen</option>
-  </select>
-  <select name="source" aria-label="Medium">
-    <option value="">alle Medien</option>
-    {% for d in domains %}<option value="{{ d.d }}" {{ 'selected' if args.source == d.d }}>{{ d.n }} ({{ d.c }})</option>{% endfor %}
-  </select>
-  <input type="date" name="date_from" value="{{ args.date_from }}" aria-label="von">
-  <input type="date" name="date_to" value="{{ args.date_to }}" aria-label="bis">
+<form class="filters card" id="filters" method="get" action="/" role="search" aria-label="Themen filtern">
+  <div class="fsearch"><div class="fq">
+    <svg class="ficon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" name="q" value="{{ args.q }}" placeholder="Suche in Themen …" aria-label="Suche" autocomplete="off">
+    <kbd class="fkbd" title="Taste / springt in die Suche">/</kbd></div>
+    <noscript><button type="submit">Filtern</button></noscript>
+    <a class="button secondary freset" href="/" data-reset title="Alle Filter entfernen (Esc geht schrittweise zurück)">Zurücksetzen</a>
+  </div>
+  <div class="frow">
+    <label class="fld"><span class="flbl">Bewertung</span>
+      <select name="sentiment">
+        <option value="">alle Bewertungen</option>
+        <option value="positiv" {{ 'selected' if args.sentiment == 'positiv' }}>positiv</option>
+        <option value="neutral" {{ 'selected' if args.sentiment == 'neutral' }}>neutral</option>
+        <option value="negativ" {{ 'selected' if args.sentiment == 'negativ' }}>negativ</option>
+      </select></label>
+    <label class="fld fwide"><span class="flbl">Bereich</span>
+      <select name="scope">
+        <option value="">Konzern und Partner</option>
+        <option value="konzern" {{ 'selected' if args.scope == 'konzern' }}>nur Konzern und Marken</option>
+        <option value="partner" {{ 'selected' if args.scope == 'partner' }}>nur Partner und Beteiligungen</option>
+      </select></label>
+    <label class="fld"><span class="flbl">Medium</span>
+      <select name="source">
+        <option value="">alle Medien</option>
+        {% for d in domains %}<option value="{{ d.d }}" {{ 'selected' if args.source == d.d }}>{{ d.n }} ({{ d.c }})</option>{% endfor %}
+      </select></label>
+    <div class="fld frange" role="group" aria-labelledby="flbl-range"><span class="flbl" id="flbl-range">Zeitraum</span>
+      <div class="rangebox">
+        <input type="date" name="date_from" value="{{ args.date_from }}" aria-label="von">
+        <span class="rangesep" aria-hidden="true">–</span>
+        <input type="date" name="date_to" value="{{ args.date_to }}" aria-label="bis">
+      </div></div>
+    <label class="fld"><span class="flbl">Sortierung</span>
+      <select name="order">
+        <option value="new" {{ 'selected' if order == 'new' }}>neueste zuerst</option>
+        <option value="old" {{ 'selected' if order == 'old' }}>älteste zuerst</option>
+        <option value="size" {{ 'selected' if order == 'size' }}>meiste Meldungen</option>
+        <option value="updated" {{ 'selected' if order == 'updated' }}>zuletzt aktualisiert</option>
+      </select></label>
+  </div>
   {% if args.year %}<input type="hidden" name="year" value="{{ args.year }}">{% endif %}
   {% if select %}<input type="hidden" name="auswahl" value="1">{% endif %}
-  <select name="order" aria-label="Sortierung">
-    <option value="new" {{ 'selected' if order == 'new' }}>neueste zuerst</option>
-    <option value="old" {{ 'selected' if order == 'old' }}>älteste zuerst</option>
-    <option value="size" {{ 'selected' if order == 'size' }}>meiste Meldungen</option>
-    <option value="updated" {{ 'selected' if order == 'updated' }}>zuletzt aktualisiert</option>
-  </select>
-  <noscript><button type="submit">Filtern</button></noscript>
-  <a class="muted" href="/">zurücksetzen</a>
 </form>
 
 {% if filtered %}
@@ -284,7 +298,7 @@
       // versteckte Felder (Jahr, Auswahlmodus) angleichen, bei Zurück auch die sichtbaren Felder
       form.querySelectorAll('input[type=hidden]').forEach(function (el) { el.remove(); });
       nf.querySelectorAll('input[type=hidden]').forEach(function (el) {
-        form.insertBefore(document.importNode(el, true), form.querySelector('select[name=order]'));
+        form.appendChild(document.importNode(el, true));
       });
       if (syncFields) {
         nf.querySelectorAll('input:not([type=hidden]), select').forEach(function (el) {
@@ -330,6 +344,16 @@
     window.addEventListener('popstate', function () { load(location.href, 'pop'); });
 
     form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(timer); go(); });
+    var reset = form.querySelector('[data-reset]');
+    if (reset) reset.addEventListener('click', function (e) {     // alle Filter leeren, ohne Seitenwechsel
+      e.preventDefault();
+      clearTimeout(timer);
+      form.querySelectorAll('input[type=hidden]').forEach(function (el) { el.remove(); });
+      form.querySelectorAll('input:not([type=hidden])').forEach(function (el) { el.value = ''; });
+      form.querySelectorAll('select').forEach(function (el) { el.selectedIndex = 0; });
+      if (q) last = '';
+      if (location.search) load('/', 'push');
+    });
     form.querySelectorAll('select, input[type=date]').forEach(function (el) {
       el.addEventListener('change', go);
     });
