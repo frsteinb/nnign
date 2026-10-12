@@ -58,6 +58,7 @@ def test_topic_box_links(env):
     _topics()
     with TestClient(main.app) as c:
         page = c.get("/").text
-        assert 'class="badge negativ" href="/thema/' in page and '#bewertung"' in page    # Oval führt zur Begründung
-        tid = page.split('href="/thema/')[1].split("#")[0].split('"')[0]
-        assert 'id="bewertung" open' in c.get(f"/thema/{tid}").text
+        assert '<span class="badge negativ">' in page and '#bewertung' not in page    # Oval ist nur Etikett
+        tid = page.split('href="/thema/')[1].split('"')[0]
+        t = c.get(f"/thema/{tid}").text
+        assert '<h2>Quellen</h2>' not in t and 'class="artrow"' in t and 'class="artlink"' in t

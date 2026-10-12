@@ -2,7 +2,7 @@
   <li class="topic {{ t.sentiment }}{{ ' selectable' if select }}" data-id="{{ t.id }}" id="t{{ t.id }}">
     {% if select %}<label class="pick" title="Für das Zusammenführen auswählen"><input type="checkbox" name="ids" value="{{ t.id }}" form="mergeform" aria-label="Thema {{ t.id }} auswählen"></label>{% endif %}
     <div class="meta">
-      <a class="badge {{ t.sentiment }}" href="/thema/{{ t.id }}#bewertung" title="Warum {{ t.sentiment }}? Begründung der Bewertung anzeigen">{{ symbol[t.sentiment] }} {{ t.sentiment }}</a>
+      <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
       {% if t.scope == 'partner' %}<span class="badge partner" title="Betrifft einen Partner oder eine Beteiligung des Konzerns">Partner</span>{% endif %}
       <span title="Erstes Erscheinen">erstmals {{ t.first_published_at|d }}</span>
       {% if t.article_count > 1 %}<span>· {{ t.article_count }} Meldungen bis {{ t.last_published_at|d }}</span>{% endif %}

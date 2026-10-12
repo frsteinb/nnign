@@ -4,7 +4,7 @@
 <p><a href="/">← alle Themen</a></p>
 <article class="card">
   <div class="meta">
-    <a class="badge {{ t.sentiment }}" href="#bewertung" title="Zur Begründung der Bewertung">{{ symbol[t.sentiment] }} {{ t.sentiment }}</a>
+    <span class="badge {{ t.sentiment }}">{{ symbol[t.sentiment] }} {{ t.sentiment }}</span>
     {% if t.scope == 'partner' %}<span class="badge partner">Partner/Beteiligung</span>{% endif %}
     <span>bewertet durch: {{ {'lexikon': 'Regeln', 'llm': 'KI', 'manuell': 'Admin (manuell)', 'lernend': 'lernendes Modell', 'zeroshot': 'Zero-Shot-Modell'}.get(t.sentiment_origin, t.sentiment_origin) }}</span>
     {% if t.hidden %}<span class="badge">ausgeblendet</span>{% endif %}
@@ -41,22 +41,19 @@
     {% endif %}
     <p class="small"><a href="/doku#bewertung">So funktioniert die Bewertung</a></p>
   </details>
-  <h2>Quellen</h2>
-  <ol class="srclist">
-    {% for a in sources %}<li><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.source_name }}: {{ a.title }}</a>{% include "lang_tag.html" %} <span class="muted">{{ a.published_at|d }}</span></li>{% endfor %}
-  </ol>
 </article>
 
 <section class="card">
   <h2>Alle Meldungen zu diesem Thema</h2>
-  <table class="list">
+  <p class="small muted">{{ articles|length }} Meldung{{ 'en' if articles|length != 1 }} aus {{ articles|map(attribute='source_name')|unique|list|length }} Medi{{ 'en' if articles|map(attribute='source_name')|unique|list|length != 1 else 'um' }} · Klick auf eine Zeile öffnet den Originalartikel.</p>
+  <table class="list articles">
     <thead><tr><th>Datum</th><th>Medium</th><th>Titel</th><th>Tendenz</th><th>Weg</th><th></th></tr></thead>
     <tbody>
     {% for a in articles %}
-      <tr>
+      <tr class="artrow">
         <td>{{ a.published_at|d }}</td>
         <td>{{ a.source_name }}</td>
-        <td><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.title }}</a>{% include "lang_tag.html" %}
+        <td><a class="artlink" href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.title }}</a>{% include "lang_tag.html" %}
           {% if a.summary %}<div class="muted small">{{ a.summary[:300] }}</div>{% endif %}
           {% if a.title_orig %}<details class="orig small"><summary>Original ({{ languages.get(a.lang, a.lang) }})</summary>
             <div lang="{{ a.lang }}">{{ a.title_orig }}</div>{% if a.summary_orig %}<div class="muted" lang="{{ a.lang }}">{{ a.summary_orig[:300] }}</div>{% endif %}</details>{% endif %}</td>

@@ -29,7 +29,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("app")
 
 HERE = os.path.dirname(__file__)
-VERSION = "1.19.4"
+VERSION = "1.19.5"
 
 
 # ====================================================================== Admin-Passwort
@@ -552,7 +552,7 @@ def topic_page(request: Request, topic_id: int, _=Depends(maybe_public)):
         raise HTTPException(404, "Thema nicht gefunden")
     arts = db.query("SELECT * FROM articles WHERE topic_id=? ORDER BY published_at", (topic_id,))
     return templates.TemplateResponse(request, "topic.html", {
-        "t": t, "articles": arts, "sources": topic_sources(topic_id),
+        "t": t, "articles": arts,
         "detail": _json(t["sentiment_detail"]),
         "art_labels": {a["id"]: sentiment.label_for(_result(_json(a["sentiment_detail"]))) for a in arts},
     })
